@@ -3,14 +3,9 @@ name: Build and Push Docker Image to GHCR
 on:
   push:
     branches:
-      - main
-      - fix/progress-bar-decimal-culture
+      - my-fork
     tags:
       - '*'
-  pull_request:
-    branches:
-      - main
-      - fix/progress-bar-decimal-culture
 
 jobs:
   build-and-push:
