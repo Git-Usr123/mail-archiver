@@ -459,14 +459,19 @@ namespace MailArchiver.Services.Providers.Imap
         private static readonly int[] TransientFetchRetryDelaysMs = new[] { 5_000, 15_000, 60_000 };
 
         /// <summary>
-        /// Detects transient IMAP FETCH errors that indicate server-side throttling
-        /// (e.g. "NO Service temporarily unavailable", over-quota, rate-limit responses).
-        /// These errors are not caused by malformed messages and typically succeed when
-        /// retried after a short backoff.
+        /// Detects transient IMAP FETCH errors: server-side throttling responses
+        /// (e.g. "NO Service temporarily unavailable", over-quota, rate-limit) as well as
+        /// connection-level losses during FETCH (server unexpectedly disconnects or logs
+        /// out, e.g. observed with Yahoo while streaming certain messages). These errors
+        /// are not caused by malformed messages and typically succeed when retried after
+        /// a short backoff (the retry path reconnects/reopens as needed).
         /// </summary>
-        private static bool IsTransientImapError(Exception ex)
+        internal static bool IsTransientImapError(Exception ex)
         {
             if (ex == null) return false;
+
+            if (IsConnectionLoss(ex))
+                return true;
 
             var current = ex;
             while (current != null)
@@ -498,14 +503,51 @@ namespace MailArchiver.Services.Providers.Imap
         }
 
         /// <summary>
+        /// Detects connection-level IMAP failures: the server unexpectedly disconnected,
+        /// logged out, timed out or the TCP connection was reset/aborted. Unlike
+        /// parser-level protocol errors, the session is unusable afterwards and must be
+        /// reconnected before further commands can be issued.
+        /// </summary>
+        internal static bool IsConnectionLoss(Exception ex)
+        {
+            var current = ex;
+            while (current != null)
+            {
+                if (current is System.IO.IOException or System.Net.Sockets.SocketException)
+                    return true;
+
+                var msg = current.Message ?? string.Empty;
+                if (msg.IndexOf("unexpectedly disconnected", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    msg.IndexOf("server logging out", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    msg.IndexOf("has timed out", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    msg.IndexOf("connection was aborted", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    msg.IndexOf("forcibly closed", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    msg.IndexOf("connection reset", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    msg.IndexOf("broken pipe", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+
+                current = current.InnerException;
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Detects parser-level IMAP protocol errors (e.g. "Unexpected atom token: Server")
         /// thrown by <c>ImapFolder.GetMessageAsync</c> when the server returns a malformed
         /// FETCH response for a single message. Unlike connection-level failures, these do
         /// not imply the session is broken — only the offending response could not be
         /// parsed. The caller should skip this message without triggering a reconnect.
+        /// Connection losses (<see cref="IsConnectionLoss"/>) are explicitly excluded —
+        /// the session is dead afterwards and must go through the reconnect path.
         /// </summary>
-        private static bool IsImapProtocolParseError(Exception ex)
+        internal static bool IsImapProtocolParseError(Exception ex)
         {
+            if (IsConnectionLoss(ex))
+                return false;
+
             var current = ex;
             while (current != null)
             {
@@ -514,6 +556,32 @@ namespace MailArchiver.Services.Providers.Imap
                 current = current.InnerException;
             }
             return false;
+        }
+
+        /// <summary>
+        /// Ensures the IMAP client is connected and authenticated, and the folder is
+        /// open, before issuing a command. Reconnects/re-authenticates and reopens the
+        /// folder as needed. Used both before the initial SEARCH and between fallback
+        /// SEARCH queries, because a parser-level <see cref="ImapProtocolException"/>
+        /// from a previous SEARCH can silently desynchronize and drop the session.
+        /// </summary>
+        private async Task EnsureConnectedAsync(IMailFolder folder, ImapClient client, MailAccount account, CancellationToken ct = default)
+        {
+            if (!client.IsConnected)
+            {
+                _logger.LogWarning("Client disconnected during sync, attempting to reconnect...");
+                await _connectionFactory.ReconnectClientAsync(client, account);
+            }
+            else if (!client.IsAuthenticated)
+            {
+                _logger.LogWarning("Client not authenticated, attempting to re-authenticate...");
+                await _connectionFactory.AuthenticateClientAsync(client, account);
+            }
+
+            if (!folder.IsOpen)
+            {
+                await folder.OpenAsync(FolderAccess.ReadOnly, ct);
+            }
         }
 
         private async Task<SyncFolderResult> SyncFolderAsync(IMailFolder folder, MailAccount account, ImapClient client, string? jobId = null)
@@ -538,21 +606,7 @@ namespace MailArchiver.Services.Providers.Imap
                     return result;
                 }
 
-                if (!client.IsConnected)
-                {
-                    _logger.LogWarning("Client disconnected during sync, attempting to reconnect...");
-                    await _connectionFactory.ReconnectClientAsync(client, account);
-                }
-                else if (!client.IsAuthenticated)
-                {
-                    _logger.LogWarning("Client not authenticated, attempting to re-authenticate...");
-                    await _connectionFactory.AuthenticateClientAsync(client, account);
-                }
-
-                if (!folder.IsOpen)
-                {
-                    await folder.OpenAsync(FolderAccess.ReadOnly);
-                }
+                await EnsureConnectedAsync(folder, client, account);
 
                 bool isOutgoing = _folderService.IsOutgoingFolder(folder);
                 var lastSync = account.LastSync;
@@ -592,21 +646,7 @@ namespace MailArchiver.Services.Providers.Imap
 
                 try
                 {
-                    if (!client.IsConnected)
-                    {
-                        _logger.LogWarning("Client disconnected during sync, attempting to reconnect...");
-                        await _connectionFactory.ReconnectClientAsync(client, account);
-                    }
-                    else if (!client.IsAuthenticated)
-                    {
-                        _logger.LogWarning("Client not authenticated, attempting to re-authenticate...");
-                        await _connectionFactory.AuthenticateClientAsync(client, account);
-                    }
-
-                    if (!folder.IsOpen)
-                    {
-                        await folder.OpenAsync(FolderAccess.ReadOnly);
-                    }
+                    await EnsureConnectedAsync(folder, client, account);
 
                     IList<UniqueId> uids;
                     try
@@ -646,6 +686,7 @@ namespace MailArchiver.Services.Providers.Imap
 
                         try
                         {
+                            await EnsureConnectedAsync(folder, client, account);
                             uids = await folder.SearchAsync(SearchQuery.SentSince(lastSync.Date));
                             _logger.LogDebug("SentSince search found {Count} messages in folder {FolderName}",
                                 uids.Count, folder.FullName);
@@ -669,6 +710,7 @@ namespace MailArchiver.Services.Providers.Imap
                         {
                             _logger.LogWarning(fallbackEx, "SentSince also failed for folder {FolderName}, using All query",
                                 folder.FullName);
+                            await EnsureConnectedAsync(folder, client, account);
                             uids = await folder.SearchAsync(SearchQuery.All);
                             _logger.LogInformation("All query found {Count} total messages in folder {FolderName}, will filter by date client-side",
                                 uids.Count, folder.FullName);
@@ -723,6 +765,16 @@ namespace MailArchiver.Services.Providers.Imap
 
                             try
                             {
+                                if (circuitBreaker.SkipNextReconnectGate && !client.IsConnected)
+                                {
+                                    // The gate was set by a previous failure, but the session is actually
+                                    // dead. Invalidate the gate so the normal reconnect path below runs —
+                                    // never attempt a FETCH on a disconnected client.
+                                    _logger.LogWarning("Reconnect gate set but client is disconnected in folder {FolderName}, forcing reconnect path",
+                                        folder.FullName);
+                                    circuitBreaker.ConsumeSkipGate();
+                                }
+
                                 if (circuitBreaker.SkipNextReconnectGate)
                                 {
                                     // Previous message triggered a parser-only ImapProtocolException.
@@ -808,8 +860,8 @@ namespace MailArchiver.Services.Providers.Imap
                                     {
                                         var delayMs = TransientFetchRetryDelaysMs[attempt - 1];
                                         _logger.LogWarning(
-                                            "Transient IMAP FETCH error for UID {Uid} in folder {FolderName} on attempt {Attempt}/{Max}. " +
-                                            "Server response indicates throttling. Retrying after {DelayMs}ms. Inner: {Message}",
+                                            "Transient IMAP FETCH error for UID {Uid} in folder {FolderName} on attempt {Attempt}/{Max} " +
+                                            "(throttling or connection loss). Retrying after {DelayMs}ms. Inner: {Message}",
                                             uid, folder.FullName, attempt, maxAttempts, delayMs, fetchEx.Message);
 
                                         await Task.Delay(delayMs);
@@ -1150,51 +1202,49 @@ namespace MailArchiver.Services.Providers.Imap
 
                                 _logger.LogDebug("Raw Message-ID from IMAP: {RawMessageId}", rawMessageId ?? "NULL");
 
-                                string normalizedMessageId;
-                                string? legacyMessageId = null;
+                                List<string> candidateMessageIds;
                                 if (string.IsNullOrEmpty(rawMessageId))
                                 {
-                                    // Same deterministic fallback ID as the archiving path
-                                    // (EmailCoreService.ArchiveEmailAsync) so retention deletion
-                                    // can match messages archived without a Message-ID header.
+                                    // No Message-ID header: depending on which pipeline and application
+                                    // version archived the message, it may be stored under any of the
+                                    // fallback key formats (current IMAP format with canonical headers,
+                                    // EML/MBOX import format without canonical headers, or the legacy
+                                    // string format). Compute all candidates and match against all of
+                                    // them so archived messages are reliably recognized.
                                     var from = string.Join(",", summary.Envelope?.From?.Mailboxes.Select(m => m.Address) ?? Enumerable.Empty<string>());
                                     var to = string.Join(",", summary.Envelope?.To?.Mailboxes.Select(m => m.Address) ?? Enumerable.Empty<string>());
                                     var subject = summary.Envelope?.Subject ?? string.Empty;
-                                    // Prefer the Date header (like the archiving path); InternalDate only as fallback.
-                                    var dateTicks = summary.Envelope?.Date?.Ticks ?? summary.InternalDate?.Ticks ?? 0L;
 
-                                    normalizedMessageId = MailContentHelper.GenerateFallbackMessageId(
-                                        from, to, subject, dateTicks,
-                                        MailContentHelper.BuildCanonicalHeaders(summary.Headers));
+                                    candidateMessageIds = MailContentHelper.GenerateFallbackMessageIdCandidates(
+                                        from, to, subject,
+                                        summary.Envelope?.Date ?? default,
+                                        summary.Headers,
+                                        summary.Envelope?.From?.ToString(), summary.Envelope?.To?.ToString());
 
-                                    // Approximation of the fallback key used before the deterministic
-                                    // generator existed, for rows archived under it that have not
-                                    // been healed yet.
-                                    legacyMessageId = $"{summary.Envelope?.From}-{summary.Envelope?.To}-{summary.Envelope?.Subject}-{dateTicks}";
-
-                                    _logger.LogDebug("Constructed Message-ID (no header): {ConstructedMessageId}", normalizedMessageId);
+                                    _logger.LogDebug("Constructed fallback Message-ID candidates (no header): {CandidateMessageIds}",
+                                        string.Join(", ", candidateMessageIds));
                                 }
                                 else
                                 {
-                                    normalizedMessageId = MailContentHelper.NormalizeMessageId(rawMessageId);
+                                    var normalizedMessageId = MailContentHelper.NormalizeMessageId(rawMessageId);
+                                    candidateMessageIds = new List<string>(1) { normalizedMessageId };
                                     _logger.LogDebug("Message-ID: raw={RawMessageId}, normalized={NormalizedMessageId}",
                                         rawMessageId, normalizedMessageId);
                                 }
 
                                 var isArchived = await _context.ArchivedEmails
-                                    .AnyAsync(e => e.MailAccountId == account.Id &&
-                                        (e.MessageId == normalizedMessageId || (legacyMessageId != null && e.MessageId == legacyMessageId)));
+                                    .AnyAsync(e => e.MailAccountId == account.Id && candidateMessageIds.Contains(e.MessageId));
 
                                 if (isArchived)
                                 {
                                     uidsToDelete.Add(summary.UniqueId);
                                     _logger.LogDebug("Marking email with Message-ID {MessageId} for deletion from folder {FolderName}",
-                                        normalizedMessageId, folder.FullName);
+                                        candidateMessageIds[0], folder.FullName);
                                 }
                                 else
                                 {
                                     _logger.LogInformation("Skipping deletion of email with Message-ID {MessageId} (raw: {RawMessageId}) from folder {FolderName} (not archived). Account ID: {AccountId}",
-                                        normalizedMessageId, rawMessageId ?? "NULL", folder.FullName, account.Id);
+                                        candidateMessageIds[0], rawMessageId ?? "NULL", folder.FullName, account.Id);
                                 }
                             }
 

@@ -250,12 +250,30 @@ namespace MailArchiver.Services.Core
                 paramCounter++;
             }
 
-            // Folder filtering
+            // Folder filtering: selecting a folder also shows the emails of all descendant
+            // folders (path-boundary prefix match). Intermediate folders rendered in the
+            // folder tree can hold no emails themselves; an exact-only match would return
+            // an empty result for such parents. Kept in sync with SearchEmailsEFAsync.
             if (!string.IsNullOrEmpty(folderName))
             {
-                whereConditions.Add($@"""FolderName"" = @param{paramCounter}");
-                parameters.Add(new Npgsql.NpgsqlParameter($"@param{paramCounter}", folderName));
-                paramCounter++;
+                var exactParam = paramCounter;
+                var slashParam = paramCounter + 1;
+                var backslashParam = paramCounter + 2;
+                var dotParam = paramCounter + 3;
+                paramCounter += 4;
+
+                // Escape LIKE special chars (\ % _) in the literal part, then append the
+                // wildcard LAST so it isn't escaped. The separator must be escaped too:
+                // a backslash separator is itself the default LIKE escape character, so an
+                // unescaped "…\%" would read as literal '%' instead of "prefix + anything".
+                const string esc = "\\";
+                string Esc(string s) => s.Replace(esc, esc + esc).Replace("%", esc + "%").Replace("_", esc + "_");
+
+                whereConditions.Add($@"(""FolderName"" = @param{exactParam} OR ""FolderName"" LIKE @param{slashParam} ESCAPE '{esc}' OR ""FolderName"" LIKE @param{backslashParam} ESCAPE '{esc}' OR ""FolderName"" LIKE @param{dotParam} ESCAPE '{esc}')");
+                parameters.Add(new Npgsql.NpgsqlParameter($"@param{exactParam}", folderName));
+                parameters.Add(new Npgsql.NpgsqlParameter($"@param{slashParam}",     Esc(folderName + "/")  + "%"));
+                parameters.Add(new Npgsql.NpgsqlParameter($"@param{backslashParam}", Esc(folderName + "\\") + "%"));
+                parameters.Add(new Npgsql.NpgsqlParameter($"@param{dotParam}",       Esc(folderName + ".")  + "%"));
             }
 
             var whereClause = whereConditions.Any() ? "WHERE " + string.Join(" AND ", whereConditions) : "";
@@ -599,7 +617,18 @@ namespace MailArchiver.Services.Core
                 baseQuery = baseQuery.Where(e => e.IsOutgoing == isOutgoing.Value);
 
             if (!string.IsNullOrEmpty(folderName))
-                baseQuery = baseQuery.Where(e => e.FolderName == folderName);
+            {
+                // selecting a folder also shows the emails of all descendant folders (path-boundary
+                // prefix match). Intermediate folders rendered in the folder tree can hold no emails
+                // themselves; an exact-only match would return an empty result for such parents.
+                var slashPrefix = folderName + "/";
+                var backslashPrefix = folderName + "\\";
+                var dotPrefix = folderName + ".";
+                baseQuery = baseQuery.Where(e => e.FolderName == folderName
+                    || e.FolderName.StartsWith(slashPrefix)
+                    || e.FolderName.StartsWith(backslashPrefix)
+                    || e.FolderName.StartsWith(dotPrefix));
+            }
 
             IQueryable<ArchivedEmail> searchQuery = baseQuery;
             if (!string.IsNullOrEmpty(searchTerm))
@@ -915,7 +944,9 @@ namespace MailArchiver.Services.Core
             }
 
             message.Date = _dateTimeHelper.ToDisplayTimeZoneOffset(email.SentDate);
-            message.MessageId = email.MessageId;
+            // Normalize the stored Message-ID (legacy Graph rows may carry surrounding
+            // angle brackets) so MimeKit emits a single well-formed bracket pair.
+            message.MessageId = MailContentHelper.NormalizeMessageId(email.MessageId);
 
             await Task.Run(() => message.WriteTo(ms));
         }
@@ -1041,7 +1072,7 @@ namespace MailArchiver.Services.Core
         public async Task<bool> ArchiveEmailAsync(MailAccount account, MimeMessage message, bool isOutgoing, string? folderName = null)
         {
             // Extract date with fallback handling for malformed Date headers
-            var emailDate = ExtractEmailDate(message);
+            var emailDate = MailContentHelper.ExtractEmailDate(message.Date, message.Headers);
 
             // Extract raw headers for forensic/compliance purposes
                 var rawHeaders = ExtractRawHeaders(message);
@@ -1055,6 +1086,7 @@ namespace MailArchiver.Services.Core
                 // Check if this email is already archived
             string messageId;
             string? legacyMessageId = null;
+            string? importedMessageId = null;
             if (!string.IsNullOrWhiteSpace(message.MessageId))
             {
                 messageId = message.MessageId!;
@@ -1076,6 +1108,12 @@ namespace MailArchiver.Services.Core
                 // matched below so rows archived under it are recognized (and healed).
                 legacyMessageId = $"{message.From}-{message.To}-{message.Subject}-{emailDate.Ticks}";
 
+                // Fallback key used by the EML/MBOX import pipeline (hash without canonical
+                // headers, Date header only). Matched below so imported rows are recognized
+                // (and healed) instead of creating duplicates on sync.
+                importedMessageId = MailContentHelper.GenerateFallbackMessageId(
+                    fallbackFrom, fallbackTo, message.Subject, message.Date.Ticks);
+
                 _logger.LogWarning("Email without Message-ID header: using generated fallback ID {MessageId}. " +
                     "From: '{From}', To: '{To}', Date: {Date}, Folder: {FolderName}, Account: {AccountName}",
                     messageId, fallbackFrom, fallbackTo, emailDate, folderName ?? string.Empty, account.Name);
@@ -1083,18 +1121,21 @@ namespace MailArchiver.Services.Core
 
             var existingEmail = await _context.ArchivedEmails
                 .FirstOrDefaultAsync(e => e.MailAccountId == account.Id &&
-                    (e.MessageId == messageId || (legacyMessageId != null && e.MessageId == legacyMessageId)));
+                    (e.MessageId == messageId ||
+                     (legacyMessageId != null && e.MessageId == legacyMessageId) ||
+                     (importedMessageId != null && e.MessageId == importedMessageId)));
 
             if (existingEmail != null)
             {
                 var hasChanges = false;
 
-                // Self-heal rows archived under the legacy fallback key - but never touch
-                // compliance-locked rows: the DB trigger (prevent_locked_email_changes)
-                // forbids any change there besides IsLocked/FolderName.
+                // Self-heal rows archived under a fallback key (legacy or import format) -
+                // but never touch compliance-locked rows: the DB trigger
+                // (prevent_locked_email_changes) forbids any change there besides
+                // IsLocked/FolderName.
                 if (existingEmail.MessageId != messageId && !existingEmail.IsLocked)
                 {
-                    _logger.LogInformation("Migrating legacy fallback Message-ID '{LegacyMessageId}' to '{MessageId}' for existing email: {Subject}",
+                    _logger.LogInformation("Migrating fallback Message-ID '{LegacyMessageId}' to '{MessageId}' for existing email: {Subject}",
                         existingEmail.MessageId, messageId, existingEmail.Subject);
                     existingEmail.MessageId = messageId;
                     hasChanges = true;
@@ -1633,172 +1674,6 @@ namespace MailArchiver.Services.Core
 
         #endregion
 
-        #region Date Extraction
-
-        /// <summary>
-        /// Extracts the date from a MimeMessage with fallback handling for malformed Date headers.
-        /// Tries the Date header first, then falls back to Received headers, and finally uses a default date.
-        /// </summary>
-        /// <param name="message">The MimeMessage to extract the date from</param>
-        /// <returns>A DateTimeOffset representing the email's date</returns>
-        private DateTimeOffset ExtractEmailDate(MimeMessage message)
-        {
-            // Try to get the date from the Date header
-            try
-            {
-                if (message.Date != default)
-                {
-                    return message.Date;
-                }
-            }
-            catch (ArgumentOutOfRangeException ex)
-            {
-                _logger.LogWarning("Malformed Date header in email Subject={Subject}, attempting fallback to Received headers. Error: {Error}",
-                    message.Subject, ex.Message);
-            }
-            catch (FormatException ex)
-            {
-                _logger.LogWarning("Unparseable Date format in email Subject={Subject}, attempting fallback to Received headers. Error: {Error}",
-                    message.Subject, ex.Message);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning("Error parsing Date header in email Subject={Subject}, attempting fallback to Received headers. Error: {Error}",
-                    message.Subject, ex.Message);
-            }
-
-            // Fallback 1: Try to extract date from Received headers (newest first, which is typically at the top)
-            try
-            {
-                var receivedHeaders = message.Headers.Where(h => h.Id == HeaderId.Received).ToList();
-                
-                // Iterate through Received headers (they're typically in reverse chronological order)
-                // We want the oldest (last in the chain) which represents when the email was originally received
-                for (int i = receivedHeaders.Count - 1; i >= 0; i--)
-                {
-                    var receivedHeader = receivedHeaders[i].Value;
-                    var dateFromReceived = ExtractDateFromReceivedHeader(receivedHeader);
-                    
-                    if (dateFromReceived.HasValue)
-                    {
-                        _logger.LogInformation("Using date from Received header for email Subject={Subject}: {Date}",
-                            message.Subject, dateFromReceived.Value);
-                        return dateFromReceived.Value;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning("Error extracting date from Received headers for email Subject={Subject}: {Error}",
-                    message.Subject, ex.Message);
-            }
-
-            // Fallback 2: Try other date-related headers
-            try
-            {
-                // Try Resent-Date header
-                var resentDateHeader = message.Headers.FirstOrDefault(h => h.Id == HeaderId.ResentDate);
-                if (resentDateHeader != null)
-                {
-                    var dateValue = ParseDateHeaderValue(resentDateHeader.Value);
-                    if (dateValue.HasValue)
-                    {
-                        _logger.LogInformation("Using date from Resent-Date header for email Subject={Subject}: {Date}",
-                            message.Subject, dateValue.Value);
-                        return dateValue.Value;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug("Error checking Resent-Date header: {Error}", ex.Message);
-            }
-
-            // Fallback 3: Use a default date (Unix epoch) to indicate unknown date
-            _logger.LogWarning("Could not extract date from any header for email Subject={Subject}, From={From}, To={To}, using default date",
-                message.Subject, message.From, message.To);
-            
-            return DateTimeOffset.MinValue;
-        }
-
-        /// <summary>
-        /// Extracts a date from a Received header value
-        /// </summary>
-        /// <param name="receivedHeader">The Received header value</param>
-        /// <returns>A DateTimeOffset if parsing was successful, null otherwise</returns>
-        private DateTimeOffset? ExtractDateFromReceivedHeader(string receivedHeader)
-        {
-            if (string.IsNullOrEmpty(receivedHeader))
-                return null;
-
-            // Received headers typically end with a date in format like:
-            // ; Sat, 16 Dec 2000 08:45:05 +0100 (CET)
-            // Find the semicolon that precedes the date
-            var lastSemicolon = receivedHeader.LastIndexOf(';');
-            if (lastSemicolon < 0 || lastSemicolon >= receivedHeader.Length - 1)
-                return null;
-
-            var datePart = receivedHeader.Substring(lastSemicolon + 1).Trim();
-
-            // Try to parse the date part
-            return ParseDateHeaderValue(datePart);
-        }
-
-        /// <summary>
-        /// Parses a date string from a header value, handling various formats gracefully
-        /// </summary>
-        /// <param name="dateString">The date string to parse</param>
-        /// <returns>A DateTimeOffset if parsing was successful, null otherwise</returns>
-        private DateTimeOffset? ParseDateHeaderValue(string dateString)
-        {
-            if (string.IsNullOrEmpty(dateString))
-                return null;
-
-            // Remove any trailing comments in parentheses like (CET) or (GMT)
-            var parenIndex = dateString.IndexOf('(');
-            if (parenIndex > 0)
-            {
-                dateString = dateString.Substring(0, parenIndex).Trim();
-            }
-
-            // Try various date formats
-            var formats = new[]
-            {
-                "ddd, d MMM yyyy H:mm:ss zzz",
-                "ddd, d MMM yyyy HH:mm:ss zzz",
-                "ddd, d MMM yyyy H:mm:ss",
-                "ddd, d MMM yyyy HH:mm:ss",
-                "d MMM yyyy H:mm:ss zzz",
-                "d MMM yyyy HH:mm:ss zzz",
-                "d MMM yyyy H:mm:ss",
-                "d MMM yyyy HH:mm:ss",
-                "ddd, d MMM yy H:mm:ss zzz",
-                "ddd, d MMM yy HH:mm:ss zzz",
-                "d MMM yy H:mm:ss zzz",
-                "d MMM yy HH:mm:ss zzz"
-            };
-
-            foreach (var format in formats)
-            {
-                if (DateTimeOffset.TryParseExact(dateString, format, CultureInfo.InvariantCulture, 
-                    DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out var result))
-                {
-                    return result;
-                }
-            }
-
-            // Try the standard RFC 2822 date parsing as a fallback
-            if (DateTimeOffset.TryParse(dateString, CultureInfo.InvariantCulture, 
-                DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeLocal, out var parsedDate))
-            {
-                return parsedDate;
-            }
-
-            return null;
-        }
-
-        #endregion
-
         /// <summary>
         /// Checks if a folder name indicates outgoing mail based on its name in multiple languages
         /// </summary>
@@ -2132,19 +2007,20 @@ namespace MailArchiver.Services.Core
         // Builds the folder tree from (folderName, count) pairs. Extracted from GetFolderTreeAsync so
         // it can be unit-tested. Folder names that differ only in case are treated as one folder
         // (IMAP INBOX is case-insensitive): their counts are merged and the node is emitted once.
+        //
+        // Intermediate (container) folders that contain no emails themselves — e.g. "travel" and
+        // "travel/2022" when only "travel/2022/France" holds mail — are created as empty parent
+        // nodes so the tree shows the full hierarchy instead of flat "path/to/folder" entries.
         internal static List<FolderTreeNode> BuildFolderTree(List<(string Name, int Count)> folders)
         {
-            // Only create hierarchy when a parent folder actually exists in the data. This prevents
-            // folder names containing '/' (or '.') from being split into phantom sub-hierarchies.
-            var folderNameSet = new HashSet<string>(
-                folders.Select(f => f.Name),
-                StringComparer.OrdinalIgnoreCase);
-
             // Create nodes. If two folders differ only in case (e.g. "INBOX" and "Inbox" from two
             // accounts) merge their counts into a single node, so the same node is not emitted twice.
             var allNodes = new Dictionary<string, FolderTreeNode>(StringComparer.OrdinalIgnoreCase);
             foreach (var folder in folders)
             {
+                if (string.IsNullOrEmpty(folder.Name))
+                    continue;
+
                 if (allNodes.TryGetValue(folder.Name, out var existing))
                 {
                     existing.TotalCount += folder.Count;
@@ -2160,6 +2036,11 @@ namespace MailArchiver.Services.Core
                 };
             }
 
+            // Create intermediate parent nodes for nested folders whose container folders hold no
+            // emails and are therefore missing from the data (otherwise the children would render
+            // as flat "a/b/c" root entries).
+            EnsureIntermediateNodes(allNodes);
+
             // Build parent-child relationships. Iterate the DISTINCT nodes (not the raw folder list),
             // so each node is placed exactly once; process shortest paths first so parents exist first.
             var rootNodes = new List<FolderTreeNode>();
@@ -2174,7 +2055,7 @@ namespace MailArchiver.Services.Core
                     if (node.FullPath[i] == '/' || node.FullPath[i] == '\\' || node.FullPath[i] == '.')
                     {
                         var candidate = node.FullPath.Substring(0, i);
-                        if (folderNameSet.Contains(candidate))
+                        if (candidate.Length > 0 && allNodes.ContainsKey(candidate))
                         {
                             parentPath = candidate;
                             break;
@@ -2198,6 +2079,66 @@ namespace MailArchiver.Services.Core
             }
 
             return SortFolderTree(rootNodes);
+        }
+
+        /// <summary>
+        /// Creates intermediate (phantom) parent nodes for folder path prefixes that are missing
+        /// from the data because the container folders hold no emails. Rules per separator:
+        /// '/' and '\\' prefixes are always created — literal slashes in folder names are not
+        /// possible on servers that use them as hierarchy separator. '.' prefixes are only created
+        /// when at least two folders in the data share that exact prefix, so that genuinely dotted
+        /// flat names (e.g. "Mr. Smith", "Project v2.5") are not split into phantom sub-hierarchies.
+        /// </summary>
+        private static void EnsureIntermediateNodes(Dictionary<string, FolderTreeNode> allNodes)
+        {
+            // Snapshot of the data paths (folders that actually contain emails). Only these can
+            // seed prefix creation; created intermediates must not cascade new prefixes themselves
+            // beyond what the data justifies.
+            var dataPaths = allNodes.Keys.ToList();
+
+            foreach (var path in dataPaths)
+            {
+                for (int i = path.Length - 1; i >= 0; i--)
+                {
+                    char c = path[i];
+                    bool hardSeparator = c == '/' || c == '\\';
+                    if (!hardSeparator && c != '.')
+                        continue;
+
+                    var prefix = path.Substring(0, i);
+                    if (prefix.Length == 0 || allNodes.ContainsKey(prefix))
+                        continue;
+
+                    // For dotted names require >=2 sibling folders sharing the prefix, otherwise a
+                    // single folder like "Mr. Smith" would get a phantom "Mr" parent.
+                    if (!hardSeparator && !HasDottedSibling(dataPaths, path, prefix))
+                        continue;
+
+                    allNodes[prefix] = new FolderTreeNode
+                    {
+                        // Name is corrected to the display suffix when the node is attached to
+                        // its parent in the relationship-building pass.
+                        Name = prefix,
+                        FullPath = prefix,
+                        TotalCount = 0,
+                        UnreadCount = 0,
+                        Children = new List<FolderTreeNode>()
+                    };
+                }
+            }
+        }
+
+        /// <summary>
+        /// Returns true when at least one OTHER folder in <paramref name="dataPaths"/> also starts
+        /// with <paramref name="prefix"/> followed by a dot, i.e. at least two folders share the
+        /// dotted prefix (case-insensitively).
+        /// </summary>
+        private static bool HasDottedSibling(List<string> dataPaths, string path, string prefix)
+        {
+            var dottedPrefix = prefix + ".";
+            return dataPaths.Any(p =>
+                !string.Equals(p, path, StringComparison.Ordinal) &&
+                p.StartsWith(dottedPrefix, StringComparison.OrdinalIgnoreCase));
         }
 
         /// <summary>
