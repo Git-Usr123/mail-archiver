@@ -158,7 +158,7 @@ namespace MailArchiver.Controllers
                     accountsQuery = accountsQuery.Where(a => false);
                 }
             }
-            var accounts = await accountsQuery.ToListAsync();
+            var accounts = await accountsQuery.OrderBy(a => a.Name).ToListAsync();
             
             model.AccountOptions = new List<SelectListItem>
             {
@@ -2050,6 +2050,17 @@ namespace MailArchiver.Controllers
                 return Redirect(returnUrl ?? Url.Action("Index"));
             }
 
+            var job = _batchRestoreService.GetJob(jobId);
+            var actingUser = _authService?.GetCurrentUserDisplayName(HttpContext);
+            var isAdmin = _authService?.IsCurrentUserAdmin(HttpContext) ?? false;
+
+            // P2: only the job's owner (or an admin) may cancel it.
+            if (job == null || !JobOwnership.MayCancel(actingUser, isAdmin, job.UserId))
+            {
+                TempData["ErrorMessage"] = "You may only cancel your own jobs.";
+                return Redirect(returnUrl ?? Url.Action("Jobs"));
+            }
+
             var success = _batchRestoreService.CancelJob(jobId);
 
             if (success)
@@ -2076,6 +2087,16 @@ namespace MailArchiver.Controllers
             }
 
             var job = _syncJobService.GetJob(jobId);
+            var actingUser = _authService?.GetCurrentUserDisplayName(HttpContext);
+            var isAdmin = _authService?.IsCurrentUserAdmin(HttpContext) ?? false;
+
+            // P2: only the job's owner (or an admin) may cancel it.
+            if (job == null || !JobOwnership.MayCancel(actingUser, isAdmin, job.UserId))
+            {
+                TempData["ErrorMessage"] = "You may only cancel your own jobs.";
+                return Redirect(returnUrl ?? Url.Action("Jobs"));
+            }
+
             var success = _syncJobService.CancelJob(jobId);
 
             if (success)
@@ -2158,6 +2179,8 @@ namespace MailArchiver.Controllers
             var exportJobs = new List<AccountExportJob>();
             var selectedEmailsExportJobs = new List<SelectedEmailsExportJob>();
             var emlImportJobs = new List<EmlImportJob>();
+            var accountDeletionJobs = new List<MailAccountDeletionJob>();
+            var emailDeletionJobs = new List<EmailDeletionJob>();
 
             if (_batchRestoreService != null)
             {
@@ -2166,7 +2189,7 @@ namespace MailArchiver.Controllers
                 var allBatchJobs = GetAllBatchJobsFromService();
                 batchJobs = allBatchJobs
                     .OrderByDescending(j => j.Status == BatchRestoreJobStatus.Queued || j.Status == BatchRestoreJobStatus.Running)
-                    .ThenByDescending(j => j.Created)
+                    .ThenByDescending(j => j.Completed ?? j.Created)
                     .Take(20) // Apply top 20 restriction
                     .ToList();
             }
@@ -2177,7 +2200,12 @@ namespace MailArchiver.Controllers
                 var allSyncJobs = _syncJobService.GetAllJobs();
                 syncJobs = allSyncJobs
                     .OrderByDescending(j => j.Status == SyncJobStatus.Running) // Running jobs first
-                    .ThenByDescending(j => j.Started) // Then by start time
+                    // Then by when they ended, not when they began. Sorting finished jobs by start
+                    // time pushes the long ones to the back the moment they finish: a run that took
+                    // an hour started earlier than everything that started and finished while it was
+                    // still going. With a sync timeout that is not a near miss but a guarantee, and
+                    // the timed-out runs are exactly the ones worth seeing.
+                    .ThenByDescending(j => j.Completed ?? j.Started)
                     .Take(20) // Apply top 20 restriction
                     .ToList();
             }
@@ -2190,7 +2218,7 @@ namespace MailArchiver.Controllers
                 {
                     mboxJobs = mboxService.GetAllJobs()
                         .OrderByDescending(j => j.Status == MBoxImportJobStatus.Running || j.Status == MBoxImportJobStatus.Queued)
-                        .ThenByDescending(j => j.Created)
+                        .ThenByDescending(j => j.Completed ?? j.Created)
                         .Take(20) // Apply top 20 restriction
                         .ToList();
                 }
@@ -2207,7 +2235,7 @@ namespace MailArchiver.Controllers
                 {
                     exportJobs = _exportService.GetAllJobs()
                         .OrderByDescending(j => j.Status == AccountExportJobStatus.Running || j.Status == AccountExportJobStatus.Queued)
-                        .ThenByDescending(j => j.Created)
+                        .ThenByDescending(j => j.Completed ?? j.Created)
                         .Take(20) // Apply top 20 restriction
                         .ToList();
                 }
@@ -2225,7 +2253,7 @@ namespace MailArchiver.Controllers
                 {
                     selectedEmailsExportJobs = selectedEmailsExportService.GetAllJobs()
                         .OrderByDescending(j => j.Status == SelectedEmailsExportJobStatus.Running || j.Status == SelectedEmailsExportJobStatus.Queued)
-                        .ThenByDescending(j => j.Created)
+                        .ThenByDescending(j => j.Completed ?? j.Created)
                         .Take(20) // Apply top 20 restriction
                         .ToList();
                 }
@@ -2243,7 +2271,47 @@ namespace MailArchiver.Controllers
                 {
                     emlImportJobs = emlImportService.GetAllJobs()
                         .OrderByDescending(j => j.Status == EmlImportJobStatus.Running || j.Status == EmlImportJobStatus.Queued)
-                        .ThenByDescending(j => j.Created)
+                        .ThenByDescending(j => j.Completed ?? j.Created)
+                        .Take(20) // Apply top 20 restriction consistent with other job types
+                        .ToList();
+                }
+            }
+            catch
+            {
+                // Ignore if service not available
+            }
+
+            // Deletion jobs. Both kinds have had their own status page since they were introduced,
+            // reachable only through the redirect that starts them — close the window and there was
+            // no way back, and the job is dropped after 24 hours anyway.
+            try
+            {
+                var accountDeletionService = HttpContext.RequestServices.GetService<IMailAccountDeletionService>();
+                if (accountDeletionService != null)
+                {
+                    accountDeletionJobs = accountDeletionService.GetAllJobs()
+                        .OrderByDescending(j => j.Status == MailAccountDeletionJobStatus.Running || j.Status == MailAccountDeletionJobStatus.Queued)
+                        // By when they ended, like every other panel: an account deletion can run
+                        // for hours, and sorting it by its start time would sink it below quick
+                        // jobs the moment it finishes — with the cap of 20 it would never show.
+                        .ThenByDescending(j => j.Completed ?? j.Created)
+                        .Take(20) // Apply top 20 restriction consistent with other job types
+                        .ToList();
+                }
+            }
+            catch
+            {
+                // Ignore if service not available
+            }
+
+            try
+            {
+                if (_emailDeletionService != null)
+                {
+                    emailDeletionJobs = _emailDeletionService.GetAllJobs()
+                        .OrderByDescending(j => j.Status == EmailDeletionJobStatus.Running || j.Status == EmailDeletionJobStatus.Queued)
+                        // By when they ended, like every other panel (see the account deletion list above)
+                        .ThenByDescending(j => j.Completed ?? j.Created)
                         .Take(20) // Apply top 20 restriction consistent with other job types
                         .ToList();
                 }
@@ -2259,6 +2327,8 @@ namespace MailArchiver.Controllers
             ViewBag.ExportJobs = exportJobs;
             ViewBag.SelectedEmailsExportJobs = selectedEmailsExportJobs;
             ViewBag.EmlImportJobs = emlImportJobs;
+            ViewBag.AccountDeletionJobs = accountDeletionJobs;
+            ViewBag.EmailDeletionJobs = emailDeletionJobs;
 
             return View(batchJobs);
         }
@@ -2310,6 +2380,17 @@ namespace MailArchiver.Controllers
             {
                 TempData["ErrorMessage"] = "Invalid job ID.";
                 return Redirect(returnUrl ?? Url.Action("Index"));
+            }
+
+            var job = _selectedEmailsExportService.GetJob(jobId);
+            var actingUser = _authService?.GetCurrentUserDisplayName(HttpContext);
+            var isAdmin = _authService?.IsCurrentUserAdmin(HttpContext) ?? false;
+
+            // P2: only the job's owner (or an admin) may cancel it.
+            if (job == null || !JobOwnership.MayCancel(actingUser, isAdmin, job.UserId))
+            {
+                TempData["ErrorMessage"] = "You may only cancel your own jobs.";
+                return Redirect(returnUrl ?? Url.Action("Jobs"));
             }
 
             var success = _selectedEmailsExportService.CancelJob(jobId);
@@ -3054,6 +3135,17 @@ namespace MailArchiver.Controllers
             {
                 TempData["ErrorMessage"] = "Invalid job ID.";
                 return Redirect(returnUrl ?? Url.Action("Index"));
+            }
+
+            var job = _emailDeletionService.GetJob(jobId);
+            var actingUser = _authService?.GetCurrentUserDisplayName(HttpContext);
+            var isAdmin = _authService?.IsCurrentUserAdmin(HttpContext) ?? false;
+
+            // P2: only the job's owner (or an admin) may cancel it.
+            if (job == null || !JobOwnership.MayCancel(actingUser, isAdmin, job.UserId))
+            {
+                TempData["ErrorMessage"] = "You may only cancel your own jobs.";
+                return Redirect(returnUrl ?? Url.Action("Jobs"));
             }
             
             var success = _emailDeletionService.CancelJob(jobId);

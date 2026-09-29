@@ -4,6 +4,7 @@ using MailArchiver.Models.ViewModels;
 using MailArchiver.ViewModels;
 using MailArchiver.Services;
 using MailArchiver.Services.Providers;
+using MailArchiver.Services.Shared;
 using MailArchiver.Utilities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Rendering;
@@ -25,6 +26,7 @@ namespace MailArchiver.Controllers
     private readonly ILogger<MailAccountsController> _logger;
     private readonly BatchRestoreOptions _batchOptions;
     private readonly TenantManagementOptions _tenantManagementOptions;
+    private readonly MailSyncOptions _mailSyncOptions;
     private readonly ISyncJobService _syncJobService;
     private readonly IMBoxImportService _mboxImportService;
     private readonly IEmlImportService _emlImportService;
@@ -59,7 +61,11 @@ namespace MailArchiver.Controllers
         IMsaOAuthService msaOAuthService,
         IOptions<MsaOAuthOptions> msaOptions,
         IAccountStorageService accountStorageService,
-        IOptions<CsvImportOptions> csvImportOptions)
+        IOptions<CsvImportOptions> csvImportOptions,
+        IOptions<OffloadOptions> offloadOptions,
+        IOptions<MailSyncOptions> mailSyncOptions,
+        IBatchRestoreService batchRestoreService,
+        MailArchiver.Utilities.DateTimeHelper dateTimeHelper)
     {
         _context = context;
         _emailCoreService = emailCoreService;
@@ -68,6 +74,7 @@ namespace MailArchiver.Controllers
         _logger = logger;
         _batchOptions = batchOptions.Value;
         _tenantManagementOptions = tenantManagementOptions.Value;
+        _mailSyncOptions = mailSyncOptions.Value;
         _syncJobService = syncJobService;
         _mboxImportService = mboxImportService;
         _emlImportService = emlImportService;
@@ -81,7 +88,14 @@ namespace MailArchiver.Controllers
         _msaOptions = msaOptions.Value;
         _accountStorageService = accountStorageService;
         _csvImportOptions = csvImportOptions.Value;
+        _offloadOptions = offloadOptions.Value;
+        _batchRestoreService = batchRestoreService;
+        _dateTimeHelper = dateTimeHelper;
     }
+
+        private readonly OffloadOptions _offloadOptions;
+        private readonly IBatchRestoreService _batchRestoreService;
+        private readonly MailArchiver.Utilities.DateTimeHelper _dateTimeHelper;
 
         private async Task<bool> HasAccessToAccountAsync(int accountId)
         {
@@ -114,6 +128,15 @@ namespace MailArchiver.Controllers
             _logger.LogInformation("User has no special permissions, denying access to account {AccountId}", accountId);
             return false;
         }
+
+        /// <summary>
+        /// The acting user's account scope, taken from the resolver the REST API and the MCP
+        /// server already delegate to, so the offload form does not grow a second notion of who
+        /// may use which mailbox. Null means admin, i.e. every account; an empty list means none.
+        /// </summary>
+        private async Task<List<int>?> GetAllowedAccountIdsAsync()
+            => await HttpContext.RequestServices.GetRequiredService<IAccountAccessResolver>()
+                .GetAllowedAccountIdsAsync(HttpContext);
 
         // GET: MailAccounts
         public async Task<IActionResult> Index()
@@ -162,7 +185,8 @@ namespace MailArchiver.Controllers
                     IsEnabled = a.IsEnabled,
                     LastSync = a.LastSync,
                     DeleteAfterDays = a.DeleteAfterDays,
-                    Provider = a.Provider
+                    Provider = a.Provider,
+                    EmailCount = a.ArchivedEmails.Count
                 })
                 .ToListAsync();
 
@@ -185,6 +209,11 @@ namespace MailArchiver.Controllers
                         && account.Provider != ProviderType.IMPORT
                         && account.LastSync.HasValue
                         && account.LastSync.Value <= new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+                    var lastRun = _syncJobService.GetLastCompletedJobForAccount(account.Id);
+                    account.LastRunHadIssues = lastRun != null
+                        && ((!lastRun.FailuresAcknowledged && (lastRun.FailedEmails > 0 || lastRun.FailedFolders > 0))
+                            || lastRun.MissingFolders > 0);
                 }
             }
 
@@ -244,6 +273,19 @@ namespace MailArchiver.Controllers
                 && account.LastSync <= new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
             ViewBag.EmailCount = emailCount;
+
+            // The installation-wide exclusions apply on top of the account's own and are otherwise
+            // invisible, so a folder can go unsynced with no explanation anywhere in the UI.
+            ViewBag.GlobalExcludedFolders = _mailSyncOptions.GlobalExcludedFolders;
+
+            // Same reason: an entry reaching downwards is invisible in a list of bare folder names.
+            ViewBag.ExcludeSubfolders = _mailSyncOptions.ExcludeSubfolders;
+
+            // The last run that reached an end, so the page can say what happened rather than only
+            // when it happened. Null right after a restart, which the view says out loud instead of
+            // pretending the account is fine.
+            ViewBag.LastRun = _syncJobService.GetLastCompletedJobForAccount(account.Id);
+
             return View(model);
         }
 
@@ -700,7 +742,18 @@ namespace MailArchiver.Controllers
             ViewBag.MsaHasDefaultClientId = _msaOptions.HasDefaultClientId;
             
             // Note: Folders are now loaded on-demand via AJAX to improve page load performance
-            // The GetFolders endpoint handles folder loading when the user clicks the "Load Folders" button
+            // The GetFoldersForExclusion endpoint handles folder loading when the user clicks the
+            // "Load Folders" button, and marks the ones the installation-wide list already covers.
+
+            // Shown read-only next to the account's own list: this is where somebody asks whether
+            // they still need to add Kalender, and the answer is usually no.
+            ViewBag.GlobalExcludedFolders = _mailSyncOptions.GlobalExcludedFolders;
+
+            // The picker decides in the browser which folders the account's own entries already
+            // cover, because that list changes with every click and a round trip per click would be
+            // absurd. It needs the same switch the matcher gets, or it would claim a reach the sync
+            // does not have.
+            ViewBag.ExcludeSubfolders = _mailSyncOptions.ExcludeSubfolders;
 
             return View(model);
         }
@@ -768,6 +821,8 @@ namespace MailArchiver.Controllers
             }
 
             ViewBag.MsaHasDefaultClientId = _msaOptions.HasDefaultClientId;
+            ViewBag.GlobalExcludedFolders = _mailSyncOptions.GlobalExcludedFolders;
+            ViewBag.ExcludeSubfolders = _mailSyncOptions.ExcludeSubfolders;
 
             // For MSA without a configured default ClientId, a per-account ClientId is required.
             if (model.Provider == ProviderType.MSA && !_msaOptions.HasDefaultClientId
@@ -1241,8 +1296,11 @@ namespace MailArchiver.Controllers
 
             try
             {
-                // Use the sync job service to start a sync with validation
-                var jobId = await _syncJobService.StartSyncAsync(id, account.Name);
+                // Use the sync job service to start a sync with validation. The acting
+                // user is carried on the job so cancel rights can be enforced (P2).
+                var authServiceForSync = HttpContext.RequestServices.GetService<MailArchiver.Services.IAuthenticationService>();
+                var jobId = await _syncJobService.StartSyncAsync(
+                    id, account.Name, userId: authServiceForSync.GetCurrentUserDisplayName(HttpContext));
                 if (!string.IsNullOrEmpty(jobId))
                 {
                     // Actually perform the sync based on provider type
@@ -1372,6 +1430,194 @@ namespace MailArchiver.Controllers
             }
 
             return RedirectToAction(nameof(Details), new { id });
+        }
+
+        // GET: MailAccounts/Offload/5
+        [HttpGet]
+        public async Task<IActionResult> Offload(int id)
+        {
+            if (!await HasAccessToAccountAsync(id)) return NotFound();
+
+            var account = await _context.MailAccounts.FindAsync(id);
+            if (account == null) return NotFound();
+
+            var model = await BuildOffloadViewModelAsync(account);
+            return View(model);
+        }
+
+        // POST: MailAccounts/Offload/5
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> Offload(int id, OffloadViewModel model)
+        {
+            if (!await HasAccessToAccountAsync(id)) return NotFound();
+
+            var account = await _context.MailAccounts.FindAsync(id);
+            if (account == null) return NotFound();
+
+            // This is the boundary, not the dropdown. A post can name any account ID, so the
+            // target is decided here, through the same rules that filtered the list.
+            var allowedAccountIds = await GetAllowedAccountIdsAsync();
+            var target = await _context.MailAccounts.FindAsync(model.TargetAccountId);
+            var rejection = OffloadTargetEligibility.Evaluate(
+                target == null ? null : new OffloadTargetCandidate
+                {
+                    Id = target.Id,
+                    // The Graph restore path is untouched by this feature.
+                    Provider = target.Provider,
+                    IsAccessible = OffloadTargetEligibility.IsAccessible(target.Id, allowedAccountIds),
+                },
+                id);
+
+            if (rejection != OffloadTargetRejection.None)
+            {
+                // Being handed a target one may not use is worth noticing, and worth noticing
+                // repeatedly; picking the source is an ordinary form slip.
+                _logger.Log(
+                    rejection == OffloadTargetRejection.NotAccessible ? LogLevel.Warning : LogLevel.Information,
+                    "Rejected offload target {TargetId} for source {SourceId} requested by {User}: {Reason}",
+                    model.TargetAccountId, id, User?.Identity?.Name ?? "unknown", rejection);
+                ModelState.AddModelError(
+                    nameof(model.TargetAccountId),
+                    _localizer[OffloadTargetEligibility.MessageKey(rejection)].Value);
+            }
+
+            // Resolved to an absolute date here, once, so a repeat of this job selects the same
+            // mail even if it runs days later. OffloadCutoff expects a moment in the configured
+            // display timezone, the same one SentDate is stored in; using UTC would shift the
+            // window by the timezone offset (M1).
+            var nowDisplay = _dateTimeHelper.ConvertToDisplayTimeZone(DateTimeOffset.UtcNow);
+            DateTime cutoffFrom;
+            if (model.CutoffFrom.HasValue)
+            {
+                cutoffFrom = MailArchiver.Services.Shared.OffloadCutoff.FromAbsolute(model.CutoffFrom.Value);
+            }
+            else if (model.WindowMonths > 0)
+            {
+                cutoffFrom = MailArchiver.Services.Shared.OffloadCutoff.FromRelativeMonths(nowDisplay, model.WindowMonths);
+            }
+            else
+            {
+                ModelState.AddModelError(nameof(model.CutoffFrom), _localizer["OffloadCutoffRequired"].Value);
+                cutoffFrom = default;
+            }
+
+            if (model.CutoffTo.HasValue && model.CutoffTo.Value.Date < cutoffFrom.Date)
+            {
+                ModelState.AddModelError(nameof(model.CutoffTo), _localizer["OffloadCutoffToBeforeFrom"].Value);
+            }
+
+            if (!ModelState.IsValid)
+            {
+                var redisplay = await BuildOffloadViewModelAsync(account);
+                redisplay.TargetAccountId = model.TargetAccountId;
+                redisplay.TargetFolder = model.TargetFolder;
+                redisplay.PreserveFolderStructure = model.PreserveFolderStructure;
+                redisplay.WindowMonths = model.WindowMonths;
+                redisplay.CutoffFrom = model.CutoffFrom;
+                redisplay.CutoffTo = model.CutoffTo;
+                redisplay.DryRun = model.DryRun;
+                redisplay.MarkAsSeen = model.MarkAsSeen;
+                return View(redisplay);
+            }
+
+            var upper = model.CutoffTo?.Date.AddDays(1).AddSeconds(-1);
+            var countQuery = _context.ArchivedEmails
+                .Where(e => e.MailAccountId == id && e.SentDate >= cutoffFrom);
+            if (upper.HasValue) countQuery = countQuery.Where(e => e.SentDate <= upper.Value);
+            var resolvedCount = await countQuery.CountAsync();
+
+            if (resolvedCount == 0)
+            {
+                TempData["ErrorMessage"] = _localizer["OffloadNothingInWindow"].Value;
+                return RedirectToAction(nameof(Offload), new { id });
+            }
+
+            // Kept as a sanity guard rather than the binding constraint it used to be: a date
+            // window brings even a very large mailbox well under this.
+            if (resolvedCount > _batchOptions.MaxAsyncEmails)
+            {
+                TempData["ErrorMessage"] = _localizer["TooManyEmailsInAccount", resolvedCount, _batchOptions.MaxAsyncEmails].Value;
+                return RedirectToAction(nameof(Offload), new { id });
+            }
+
+            var job = new BatchRestoreJob
+            {
+                TargetAccountId = model.TargetAccountId,
+                TargetFolder = string.IsNullOrWhiteSpace(model.TargetFolder) ? "INBOX" : model.TargetFolder.Trim(),
+                PreserveFolderStructure = model.PreserveFolderStructure,
+                UserId = User?.Identity?.Name ?? "System",
+                ReturnUrl = Url.Action(nameof(Details), new { id }) ?? "/",
+                Offload = new OffloadCriteria
+                {
+                    SourceAccountId = id,
+                    CutoffFrom = cutoffFrom,
+                    CutoffTo = model.CutoffTo,
+                    ExcludedSourceFolders = _offloadOptions.ExcludedSourceFolders,
+                    FolderRenameMap = _offloadOptions.FolderRenameMap,
+                    MarkAsSeen = model.MarkAsSeen,
+                    DryRun = model.DryRun,
+                },
+            };
+
+            var jobId = _batchRestoreService.QueueJob(job);
+
+            _logger.LogInformation(
+                "Queued offload job {JobId}: {Count} mails from account {SourceId} to {TargetId}, window {Window}, dry run {DryRun}",
+                jobId, resolvedCount, id, model.TargetAccountId, job.Offload.DescribeWindow(), model.DryRun);
+
+            TempData["SuccessMessage"] = model.DryRun
+                ? _localizer["OffloadDryRunQueued", resolvedCount].Value
+                : _localizer["OffloadQueued", resolvedCount].Value;
+
+            return RedirectToAction("BatchRestoreStatus", "Emails", new { jobId });
+        }
+
+        private async Task<OffloadViewModel> BuildOffloadViewModelAsync(MailAccount account)
+        {
+            // Narrowed in SQL first, so a mailbox the user may not use is never even
+            // materialised, and then decided by OffloadTargetEligibility, so what this list
+            // offers and what the post accepts cannot drift apart.
+            var allowedAccountIds = await GetAllowedAccountIdsAsync();
+            var candidateQuery = _context.MailAccounts.AsQueryable();
+            if (allowedAccountIds != null)
+            {
+                candidateQuery = candidateQuery.Where(a => allowedAccountIds.Contains(a.Id));
+            }
+
+            var candidates = await candidateQuery
+                .OrderBy(a => a.Name)
+                .Select(a => new { a.Id, a.Name, a.EmailAddress, a.Provider })
+                .ToListAsync();
+
+            var targets = candidates
+                .Where(a => OffloadTargetEligibility.IsEligible(
+                    new OffloadTargetCandidate
+                    {
+                        Id = a.Id,
+                        Provider = a.Provider,
+                        IsAccessible = OffloadTargetEligibility.IsAccessible(a.Id, allowedAccountIds),
+                    },
+                    account.Id))
+                .Select(a => new OffloadViewModel.TargetAccountOption
+                {
+                    Id = a.Id,
+                    Name = a.Name,
+                    EmailAddress = a.EmailAddress,
+                })
+                .ToList();
+
+            return new OffloadViewModel
+            {
+                SourceAccountId = account.Id,
+                SourceAccountName = account.Name,
+                SourceTotalEmails = await _context.ArchivedEmails.CountAsync(e => e.MailAccountId == account.Id),
+                AvailableTargets = targets,
+                TargetsAreScopedToUser = allowedAccountIds != null,
+                ExcludedSourceFolders = _offloadOptions.ExcludedSourceFolders,
+                FolderRenameMap = _offloadOptions.FolderRenameMap,
+                MarkAsSeen = _offloadOptions.MarkAsSeen,
+            };
         }
 
         // POST: MailAccounts/MoveAllEmails/5
@@ -2162,6 +2408,65 @@ namespace MailArchiver.Controllers
             }
 
             return Redirect(returnUrl ?? Url.Action(nameof(Index)));
+        }
+
+        /// <summary>
+        /// The folder picker for the exclusion editor. Separate from <see cref="GetFolders"/>, which
+        /// three other views consume as a plain string list and which must keep that shape.
+        ///
+        /// Each folder carries whether the installation-wide list already covers it. That has to be
+        /// decided here rather than in the browser: the matching rules include an unanchored suffix
+        /// match on the folder's own name, so a global entry "Kontakte" also excludes
+        /// "Vorgeschlagene Kontakte" — a name comparison in JavaScript would miss exactly the cases
+        /// worth showing.
+        /// </summary>
+        [HttpGet]
+        public async Task<JsonResult> GetFoldersForExclusion(int accountId)
+        {
+            if (!await HasAccessToAccountAsync(accountId))
+            {
+                return Json(new List<MailFolderInfo>());
+            }
+
+            var account = await _context.MailAccounts.FindAsync(accountId);
+            if (account == null || account.Provider == ProviderType.IMPORT)
+            {
+                return Json(new List<MailFolderInfo>());
+            }
+
+            try
+            {
+                List<MailFolderInfo> folders;
+                if (account.Provider == ProviderType.M365)
+                {
+                    folders = await _graphEmailService.GetMailFolderDetailsAsync(account);
+                }
+                else
+                {
+                    var provider = await _providerFactory.GetServiceForAccountAsync(accountId);
+                    folders = await provider.GetMailFolderDetailsAsync(accountId);
+                }
+
+                FolderExclusionMarking.MarkGloballyExcluded(
+                    folders, _mailSyncOptions.GlobalExcludedFolders,
+                    _mailSyncOptions.ExcludeSubfolders);
+
+                // coveredBy, not just the flag: an entry covers what lies underneath it, so the
+                // folder the picker strikes through is often named nowhere in the list and the
+                // user would be hunting for an entry that does not exist.
+                return Json(folders.Select(f => new
+                {
+                    fullName = f.FullName,
+                    name = f.Name,
+                    globallyExcluded = f.GloballyExcluded,
+                    coveredBy = f.GloballyExcludedBy
+                }));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error loading folder details for account {AccountId}", accountId);
+                return Json(new List<MailFolderInfo>());
+            }
         }
 
         // AJAX endpoint for folder loading

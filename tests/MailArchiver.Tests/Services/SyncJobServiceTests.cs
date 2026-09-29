@@ -21,8 +21,10 @@ public class SyncJobServiceTests
     private readonly TestDbFixture _fixture;
     public SyncJobServiceTests(TestDbFixture fixture) => _fixture = fixture;
 
-    private SyncJobService CreateService(MailArchiverDbContext sharedContext) =>
-        new(NullLogger<SyncJobService>.Instance, ServiceFactory.BuildScopedProviderFor(sharedContext));
+    private SyncJobService CreateService(MailArchiverDbContext sharedContext, int maxIssuesPerKind = 20) =>
+        new(NullLogger<SyncJobService>.Instance,
+            ServiceFactory.BuildScopedProviderFor(sharedContext),
+            Microsoft.Extensions.Options.Options.Create(new MailSyncOptions { MaxIssuesPerKind = maxIssuesPerKind }));
 
     private static async Task<MailAccount> SeedAccountAsync(MailArchiverDbContext ctx, ProviderType provider = ProviderType.IMAP)
     {
@@ -421,6 +423,93 @@ public class SyncJobServiceTests
             Assert.Equal(SyncJobStatus.RateLimited, job!.Status);
             Assert.Equal("quota", job.ErrorMessage);
             // Should be removed from active, allowing restart
+            var j2 = await svc.StartSyncAsync(acct.Id, acct.Name);
+            Assert.NotNull(j2);
+        }
+        finally
+        {
+            await CleanupTestAccountAsync(ctx);
+            await ctx.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task GetLastCompletedJobForAccount_ReturnsTheRunThatFinishedLast()
+    {
+        // The account page asks this, not the job list: with 75 accounts on a quarter-hour interval
+        // the twenty rows the job list shows are a four-minute window and the run being looked for
+        // has long since dropped off it.
+        var ctx = _fixture.CreateContext();
+        try
+        {
+            var acct = await SeedAccountAsync(ctx);
+            var svc = CreateService(ctx);
+
+            Assert.Null(svc.GetLastCompletedJobForAccount(acct.Id));
+
+            var first = await svc.StartSyncAsync(acct.Id, acct.Name);
+            svc.CompleteJob(first!, true);
+            Assert.Equal(first, svc.GetLastCompletedJobForAccount(acct.Id)?.JobId);
+
+            var second = await svc.StartSyncAsync(acct.Id, acct.Name);
+            svc.CompleteJobTimedOut(second!, "timeout");
+            Assert.Equal(second, svc.GetLastCompletedJobForAccount(acct.Id)?.JobId);
+        }
+        finally
+        {
+            await CleanupTestAccountAsync(ctx);
+            await ctx.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task CleanupOldJobs_DropsTheLastRunOfAccountsThatNoLongerExist()
+    {
+        // The index is held by reference so it survives the 24-hour job cleanup. That is the point,
+        // but it also means a deleted account would keep its entry until the process restarts.
+        var ctx = _fixture.CreateContext();
+        try
+        {
+            var acct = await SeedAccountAsync(ctx);
+            var svc = CreateService(ctx);
+            var jobId = await svc.StartSyncAsync(acct.Id, acct.Name);
+            svc.CompleteJob(jobId!, true);
+            Assert.NotNull(svc.GetLastCompletedJobForAccount(acct.Id));
+
+            ctx.MailAccounts.Remove(await ctx.MailAccounts.FindAsync(acct.Id) ?? throw new InvalidOperationException());
+            await ctx.SaveChangesAsync();
+
+            svc.CleanupOldJobs();
+
+            Assert.Null(svc.GetLastCompletedJobForAccount(acct.Id));
+        }
+        finally
+        {
+            await CleanupTestAccountAsync(ctx);
+            await ctx.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task CompleteJobTimedOut_SetsTimedOutAndRemovesFromActive()
+    {
+        // The timeout is a pause, not a failure, so it gets its own terminal status rather than
+        // borrowing RateLimited (which would misreport the reason in the jobs list) or Failed
+        // (which would suggest something went wrong). And like the rate-limited path it has to
+        // release the account, or the next scheduled run could never pick the account up again.
+        var ctx = _fixture.CreateContext();
+        try
+        {
+            var acct = await SeedAccountAsync(ctx);
+            var svc = CreateService(ctx);
+            var jobId = await svc.StartSyncAsync(acct.Id, acct.Name);
+            svc.CompleteJobTimedOut(jobId!, "timeout after 60 minutes");
+
+            var job = svc.GetJob(jobId!);
+            Assert.Equal(SyncJobStatus.TimedOut, job!.Status);
+            Assert.Equal("timeout after 60 minutes", job.ErrorMessage);
+            Assert.False(svc.IsAccountSyncing(acct.Id));
+
             var j2 = await svc.StartSyncAsync(acct.Id, acct.Name);
             Assert.NotNull(j2);
         }

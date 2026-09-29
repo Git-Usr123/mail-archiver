@@ -649,6 +649,24 @@
   <data name="ExcludedFolders" xml:space="preserve">
     <value>Исключенные папки</value>
   </data>
+  <data name="GlobalExcludedFolders" xml:space="preserve">
+    <value>Исключено для всех учётных записей</value>
+  </data>
+  <data name="GlobalExcludedFoldersHint" xml:space="preserve">
+    <value>Настроено для всей установки и применяется дополнительно к собственному списку учётной записи. Здесь не редактируется.</value>
+  </data>
+  <data name="FolderAlreadyExcludedGlobally" xml:space="preserve">
+    <value>Уже исключено для всех учётных записей — здесь менять нечего</value>
+  </data>
+  <data name="ExclusionsCoverSubfolders" xml:space="preserve">
+    <value>Запись распространяется и на папки, расположенные ниже указанной.</value>
+  </data>
+  <data name="FolderAlreadyExcludedGloballyBy" xml:space="preserve">
+    <value>Уже исключено для всех учётных записей записью «{0}» — здесь ничего менять не нужно</value>
+  </data>
+  <data name="FolderCoveredByOwnEntry" xml:space="preserve">
+    <value>Уже охвачено записью «{0}» в этом списке вместе со всем, что находится ниже</value>
+  </data>
   <data name="EnterFolderNames" xml:space="preserve">
     <value>Введите имена папок через точку с запятой, например: Junk;Spam;Trash</value>
   </data>
@@ -2455,6 +2473,9 @@
   <data name="EmailDeletionJobs" xml:space="preserve">
     <value>Задачи удаления писем</value>
   </data>
+  <data name="AccountDeletionJobs" xml:space="preserve">
+    <value>Задачи удаления учётных записей</value>
+  </data>
   <data name="EmailDeletionProgress" xml:space="preserve">
     <value>Прогресс удаления писем</value>
   </data>
@@ -2512,6 +2533,51 @@
   <data name="RateLimited" xml:space="preserve">
     <value>Лимит скорости достигнут</value>
   </data>
+  <data name="TimedOut" xml:space="preserve">
+    <value>Время ожидания истекло</value>
+  </data>
+  <data name="LastRunTitle" xml:space="preserve">
+    <value>Последний запуск синхронизации</value>
+  </data>
+  <data name="LastRunNone" xml:space="preserve">
+    <value>С момента запуска приложения нет завершённых запусков.</value>
+  </data>
+  <data name="LastRunSyncInProgress" xml:space="preserve">
+    <value>Сейчас выполняется синхронизация.</value>
+  </data>
+  <data name="LastRunSummary" xml:space="preserve">
+    <value>Завершено {0}, длительность {1}, обработано сообщений: {2}, новых: {3}.</value>
+  </data>
+  <data name="LastRunHeldBack" xml:space="preserve">
+    <value>Отметка времени последней синхронизации не была продвинута, поэтому следующий запуск охватит тот же период.</value>
+  </data>
+  <data name="LastRunFailuresAcknowledged" xml:space="preserve">
+    <value>Ошибки этого запуска были подтверждены, поэтому отметка времени последней синхронизации была продвинута.</value>
+  </data>
+  <data name="LastRunResumes" xml:space="preserve">
+    <value>Запуск был приостановлен, а не завершён. Следующий продолжится с места остановки.</value>
+  </data>
+  <data name="IssueKindFolderFailed" xml:space="preserve">
+    <value>Папки, которые не удалось прочитать</value>
+  </data>
+  <data name="IssueKindFolderMissing" xml:space="preserve">
+    <value>Папки, которых нет на сервере</value>
+  </data>
+  <data name="IssueKindFolderMissingHint" xml:space="preserve">
+    <value>Обычно это оставшиеся подписки на удалённые папки. Безвредно, но стоит очистить в почтовой программе.</value>
+  </data>
+  <data name="IssueKindMessageFailed" xml:space="preserve">
+    <value>Сообщения, которые не удалось архивировать</value>
+  </data>
+  <data name="IssueNoDetails" xml:space="preserve">
+    <value>Подробности не записаны.</value>
+  </data>
+  <data name="IssueAndMore" xml:space="preserve">
+    <value>и ещё {0}</value>
+  </data>
+  <data name="LastRunHadIssuesHint" xml:space="preserve">
+    <value>Последний запуск сообщил о проблемах</value>
+  </data>
   <data name="SyncProgressTooltip" xml:space="preserve">
     <value>Прогресс измеряется по завершённым папкам. Большая папка (напр. INBOX) удерживает полосу на 0%, пока не завершится.</value>
   </data>
@@ -2523,6 +2589,12 @@
   </data>
   <data name="ToggleFolderTree" xml:space="preserve">
     <value>Нажмите, чтобы развернуть/свернуть дерево папок</value>
+  </data>
+  <data name="ExpandAllFolders" xml:space="preserve">
+    <value>Развернуть все папки</value>
+  </data>
+  <data name="CollapseAllFolders" xml:space="preserve">
+    <value>Свернуть все папки</value>
   </data>
   <data name="NoFolders" xml:space="preserve">
     <value>Папки недоступны</value>
@@ -3187,5 +3259,230 @@
   </data>
   <data name="FailuresAcknowledged" xml:space="preserve">
     <value>Ошибки подтверждены</value>
+  </data>
+  <data name="OffloadTitle" xml:space="preserve">
+    <value>Выгрузить в другой почтовый ящик</value>
+  </data>
+  <data name="OffloadIntro" xml:space="preserve">
+    <value>Помещает архивную почту новее точки отсечения в другой почтовый ящик, пропуская то, что в нём уже есть. Более старая почта остаётся в архиве. Повторный запуск безопасен и ничего не дублирует из уже поступившего.</value>
+  </data>
+  <data name="OffloadSourceAndTarget" xml:space="preserve">
+    <value>Источник и назначение</value>
+  </data>
+  <data name="SourceAccount" xml:space="preserve">
+    <value>Учётная запись-источник</value>
+  </data>
+  <data name="OffloadSelectTarget" xml:space="preserve">
+    <value>Выберите целевой почтовый ящик…</value>
+  </data>
+  <data name="OffloadLoadingFolders" xml:space="preserve">
+    <value>Загрузка папок…</value>
+  </data>
+  <data name="OffloadSelectFolder" xml:space="preserve">
+    <value>-- Выберите целевую папку --</value>
+  </data>
+  <data name="OffloadErrorLoadingFolders" xml:space="preserve">
+    <value>Ошибка загрузки папок</value>
+  </data>
+  <data name="OffloadSelectTargetFirst" xml:space="preserve">
+    <value>Сначала выберите целевой почтовый ящик</value>
+  </data>
+  <data name="OffloadTargetFolderHelp" xml:space="preserve">
+    <value>Корневая папка в целевом почтовом ящике. При INBOX структура папок источника воссоздаётся на верхнем уровне.</value>
+  </data>
+  <data name="OffloadWindow" xml:space="preserve">
+    <value>Диапазон дат</value>
+  </data>
+  <data name="OffloadWindowMonths" xml:space="preserve">
+    <value>Последние N месяцев</value>
+  </data>
+  <data name="OffloadWindowMonthsHelp" xml:space="preserve">
+    <value>Преобразуется в фиксированную дату при запуске задания, поэтому повторный запуск выберет ту же почту. Установите 0, чтобы использовать явную дату.</value>
+  </data>
+  <data name="OffloadCutoffFrom" xml:space="preserve">
+    <value>Дата с</value>
+  </data>
+  <data name="OffloadCutoffFromHelp" xml:space="preserve">
+    <value>Переопределяет окно месяцев. Включительно, с 00:00 этого дня.</value>
+  </data>
+  <data name="OffloadCutoffTo" xml:space="preserve">
+    <value>Дата по (необязательно)</value>
+  </data>
+  <data name="OffloadCutoffToHelp" xml:space="preserve">
+    <value>Включительно, до 23:59:59 этого дня.</value>
+  </data>
+  <data name="OffloadOptions" xml:space="preserve">
+    <value>Параметры</value>
+  </data>
+  <data name="OffloadDryRun" xml:space="preserve">
+    <value>Пробный запуск</value>
+  </data>
+  <data name="OffloadDryRunHelp" xml:space="preserve">
+    <value>Просчитывает всё и сообщает по папкам, что произойдёт, но ничего не добавляет. Рекомендуется перед реальным запуском.</value>
+  </data>
+  <data name="OffloadMarkAsSeen" xml:space="preserve">
+    <value>Отметить добавленную почту как прочитанную</value>
+  </data>
+  <data name="OffloadMarkAsSeenHelp" xml:space="preserve">
+    <value>Отключение сохраняет непрочитанную почту непрочитанной в целевом ящике.</value>
+  </data>
+  <data name="OffloadFolderHandling" xml:space="preserve">
+    <value>Обработка папок</value>
+  </data>
+  <data name="OffloadExcludedFolders" xml:space="preserve">
+    <value>Исключённые папки источника</value>
+  </data>
+  <data name="OffloadRenameMap" xml:space="preserve">
+    <value>Карта переименования папок</value>
+  </data>
+  <data name="OffloadNoneConfigured" xml:space="preserve">
+    <value>не настроено</value>
+  </data>
+  <data name="OffloadFolderHandlingHelp" xml:space="preserve">
+    <value>Оба настраиваются в разделе Offload файла appsettings.json и по умолчанию пусты. Исключения применяются перед переименованием и охватывают подпапки.</value>
+  </data>
+  <data name="OffloadStart" xml:space="preserve">
+    <value>Начать выгрузку</value>
+  </data>
+  <data name="OffloadNoTargets" xml:space="preserve">
+    <value>Нет другого аккаунта IMAP в качестве цели. Сначала создайте его.</value>
+  </data>
+  <data name="OffloadNoTargetsAssigned" xml:space="preserve">
+    <value>Ни один из назначенных вам ящиков нельзя использовать в качестве цели. Попросите администратора назначить вам ещё один аккаунт IMAP.</value>
+  </data>
+  <data name="OffloadTargetRequired" xml:space="preserve">
+    <value>Выберите целевой почтовый ящик.</value>
+  </data>
+  <data name="OffloadTargetMustDiffer" xml:space="preserve">
+    <value>Целевой почтовый ящик должен отличаться от источника.</value>
+  </data>
+  <data name="OffloadTargetNotFound" xml:space="preserve">
+    <value>Выбранный целевой почтовый ящик больше не существует.</value>
+  </data>
+  <data name="OffloadTargetMustBeImap" xml:space="preserve">
+    <value>Целевой почтовый ящик должен быть аккаунтом IMAP.</value>
+  </data>
+  <data name="OffloadCutoffRequired" xml:space="preserve">
+    <value>Укажите окно месяцев или дату начала.</value>
+  </data>
+  <data name="OffloadCutoffToBeforeFrom" xml:space="preserve">
+    <value>Дата «по» не должна быть раньше даты «с».</value>
+  </data>
+  <data name="OffloadNothingInWindow" xml:space="preserve">
+    <value>В этот диапазон дат не попадает ни одной архивной почты.</value>
+  </data>
+  <data name="OffloadQueued" xml:space="preserve">
+    <value>Выгрузка поставлена в очередь для {0} писем.</value>
+  </data>
+  <data name="OffloadDryRunQueued" xml:space="preserve">
+    <value>Пробный запуск в очереди для {0} писем. Ничего не будет добавлено.</value>
+  </data>
+  <data name="OffloadAppended" xml:space="preserve">
+    <value>Добавлено</value>
+  </data>
+  <data name="OffloadAlreadyPresent" xml:space="preserve">
+    <value>Уже присутствует</value>
+  </data>
+  <data name="OffloadByFingerprint" xml:space="preserve">
+    <value>совпадение по отпечатку</value>
+  </data>
+  <data name="OffloadExcluded" xml:space="preserve">
+    <value>Исключённая папка</value>
+  </data>
+  <data name="OffloadReport" xml:space="preserve">
+    <value>Отчёт о выгрузке</value>
+  </data>
+  <data name="OffloadJob" xml:space="preserve">
+    <value>Выгрузка</value>
+  </data>
+
+  <data name="AuditExport" xml:space="preserve">
+    <value>Экспорт данных аудита</value>
+  </data>
+  <data name="AuditExportHistory" xml:space="preserve">
+    <value>История экспорта</value>
+  </data>
+  <data name="Mailbox" xml:space="preserve">
+    <value>Почтовый ящик</value>
+  </data>
+  <data name="AllMailboxes" xml:space="preserve">
+    <value>Все почтовые ящики</value>
+  </data>
+  <data name="AttachmentMetadata" xml:space="preserve">
+    <value>Метаданные вложений</value>
+  </data>
+  <data name="IncludeAttachmentMetadata" xml:space="preserve">
+    <value>Включить таблицу метаданных вложений</value>
+  </data>
+  <data name="DataSupplierName" xml:space="preserve">
+    <value>Имя поставщика данных</value>
+  </data>
+  <data name="DataSupplierLocation" xml:space="preserve">
+    <value>Местонахождение поставщика данных</value>
+  </data>
+  <data name="NoAuditExportsYet" xml:space="preserve">
+    <value>Экспортов пока нет</value>
+  </data>
+  <data name="Period" xml:space="preserve">
+    <value>Период</value>
+  </data>
+
+  <data name="Comment" xml:space="preserve">
+    <value>Комментарий</value>
+  </data>
+  <data name="AuditExportInvalidPeriod" xml:space="preserve">
+    <value>Недопустимый период: требуются даты начала и окончания.</value>
+  </data>
+  <data name="AuditExportRangeTooLong" xml:space="preserve">
+    <value>Период не должен превышать {0} лет.</value>
+  </data>
+  <data name="AuditExportAccountNotFound" xml:space="preserve">
+    <value>Выбранный почтовый ящик не найден.</value>
+  </data>
+  <data name="AuditExportFileNotFound" xml:space="preserve">
+    <value>Файл экспорта не найден или больше недоступен.</value>
+  </data>
+
+  <data name="BackToLogs" xml:space="preserve">
+    <value>Вернуться к журналам</value>
+  </data>
+  <data name="ExportSettings" xml:space="preserve">
+    <value>Настройки экспорта</value>
+  </data>
+  <data name="CancelExportConfirm" xml:space="preserve">
+    <value>Отменить этот экспорт?</value>
+  </data>
+  <data name="FailedFilesTitle" xml:space="preserve">
+    <value>Неудачные файлы ({0})</value>
+  </data>
+  <data name="FailedFilesTruncated" xml:space="preserve">
+    <value>Показаны только первые 200 неудачных файлов. Полный список см. в журналах Docker.</value>
+  </data>
+  <data name="FailedFilesReason_BannerLine" xml:space="preserve">
+    <value>Нестандартная строка баннера перед заголовками письма (напр. экспорт PST из MailStore)</value>
+  </data>
+  <data name="FailedFilesReason_MboxFromLine" xml:space="preserve">
+    <value>Остаток строки-маркера mbox &apos;From &apos;</value>
+  </data>
+  <data name="FailedFilesReason_SplitHeaderBlock" xml:space="preserve">
+    <value>Блок заголовков, разделённый пустыми строками</value>
+  </data>
+  <data name="FailedFilesReason_JunkBeforeHeaders" xml:space="preserve">
+    <value>Нечитаемые строки перед заголовками письма</value>
+  </data>
+  <data name="FailedFilesReason_UnparseableHeaders" xml:space="preserve">
+    <value>Не удалось разобрать заголовки письма</value>
+  </data>
+  <data name="FailedFilesReason_Generic" xml:space="preserve">
+    <value>Ошибка при обработке файла</value>
+  </data>
+  <data name="RecoveredLabel" xml:space="preserve">
+    <value>Восстановлено:</value>
+  </data>
+  <data name="RecoveredTitle" xml:space="preserve">
+    <value>Восстановленные письма</value>
+  </data>
+  <data name="RecoveredSummary" xml:space="preserve">
+    <value>{0} письмо(ем) с нестандартными заголовками было автоматически восстановлено и архивировано.</value>
   </data>
 </root>

@@ -51,14 +51,18 @@ services:
 
       # MailSync Settings
       - MailSync__IntervalMinutes=15
-      - MailSync__TimeoutMinutes=60
+      - MailSync__TimeoutMinutes=0
       - MailSync__ConnectionTimeoutSeconds=180
       - MailSync__CommandTimeoutSeconds=300
       - MailSync__AlwaysForceFullSync=false
       - MailSync__IgnoreSelfSignedCert=false
       - MailSync__MaxConcurrentSyncs=1
       - MailSync__InterAccountDelaySeconds=0
+      - MailSync__MaxIssuesPerKind=20
       - MailSync__FullSyncIntervalHours=24
+      - MailSync__ExcludeSubfolders=false
+      - MailSync__GlobalExcludedFolders__0=Calendar
+      - MailSync__GlobalExcludedFolders__1=Contacts
 
       # BatchRestore Settings
       - BatchRestore__AsyncThreshold=50
@@ -88,6 +92,12 @@ services:
       # View Settings (Privacy & Display)
       - View__DefaultToPlainText=true
       - View__BlockExternalResources=false
+
+      # Dashboard Settings (statistics cache)
+      - Dashboard__CacheSeconds=60
+
+      # Jobs Settings (background jobs page)
+      - Jobs__RefreshSeconds=30
 
       # Npgsql Settings
       - Npgsql__CommandTimeout=900
@@ -127,6 +137,7 @@ services:
       - AccountStorage__DailyExecutionTime=02:30
       - AccountStorage__BackfillDelayMs=5000
       - AccountStorage__RefreshBatchDelayMs=1000
+      - AccountStorage__CommandTimeoutSeconds=300
 
       # ReleaseNotes Settings (Version Update Splash Screen)
       - ReleaseNotes__Enabled=true
@@ -254,13 +265,27 @@ The optional MCP (Model Context Protocol) server exposes the same read-only mail
 ### 📨 MailSync Settings
 - `MailSync__IntervalMinutes`: The interval in minutes between email synchronization. This is the global default; each account can override it individually from the Create/Edit page (leave empty to use this default).
 - `MailSync__FullSyncIntervalHours`: Optional global default for automatic full resyncs, in hours. When unset (the default), no automatic full sync runs unless a per-account `FullSyncIntervalHours` value is set on the Create/Edit page. Per-account values override this global default.
-- `MailSync__TimeoutMinutes`: The timeout for the sync operation in minutes.
+- `MailSync__TimeoutMinutes`: Per-account sync timeout in minutes. A sync that runs longer stops at the next message boundary, keeps its checkpoints and resumes on the next run; the job is reported as `Timed Out` and `LastSync` is not advanced. Applies to scheduled syncs only, a sync started from the UI (manual sync or full resync) runs without a timeout. `0` (the default) or any non-positive value means no timeout. Review the value before upgrading if you sync large mailboxes. See [Synchronization.md](Synchronization.md#-stopping-a-sync-early).
 - `MailSync__ConnectionTimeoutSeconds`: The connection timeout for IMAP connections in seconds.
 - `MailSync__CommandTimeoutSeconds`: The command timeout for IMAP commands in seconds.
 - `MailSync__AlwaysForceFullSync`: Whether to always force a full sync (true/false).
 - `MailSync__IgnoreSelfSignedCert`: Whether to ignore self-signed certificates (true/false).
-- `MailSync__MaxConcurrentSyncs`: Maximum number of account syncs that may run in parallel within one poll cycle. Default `1` (sequential, backwards-compatible). Increase to sync multiple accounts concurrently — keep in mind provider rate limits and local resource usage.
+- `MailSync__MaxConcurrentSyncs`: How many account syncs may run at the same time. Default `1` (sequential, backwards-compatible). The scheduler refills slots as they come free rather than waiting for a whole batch, so one slow mailbox no longer holds up the others. Increase to sync multiple accounts concurrently — keep in mind provider rate limits and local resource usage. See [Synchronization.md](Synchronization.md#-how-accounts-are-scheduled).
 - `MailSync__InterAccountDelaySeconds`: Optional stagger delay in seconds applied at the end of each account sync task. Default `0` (no delay). Useful to avoid burst-starts when `MaxConcurrentSyncs > 1`.
+- `MailSync__MaxIssuesPerKind`: How many problems of each kind a sync job remembers for the account page. Failed folders, missing folders and failed messages are budgeted separately, so a flood of one kind cannot push the others out of view; anything beyond the budget is counted rather than kept. Default `20`. `0` switches the detail off and leaves only the counters. See [Synchronization.md](Synchronization.md#-observing-the-sync).
+- `MailSync__GlobalExcludedFolders__<n>`: Folders excluded from synchronization for **every** account, on top of each account's own excluded-folders list. Empty by default, so existing setups are unaffected. The two lists are **additive** — a folder is skipped when it matches either — and both use the same matching rules: exact match on the full path, exact match on the folder name, a path-suffix match (so `Drafts` also matches `INBOX/Drafts` and `INBOX.Drafts`), and everything below the folder an entry names when `MailSync__ExcludeSubfolders` is switched on. Matching is case-insensitive. Useful when importing many mailboxes from the same server, where the alternative is maintaining an identical exclusion list on every account. No folder is excluded by default; which names are worth listing depends on the server and its language. Example for a mailbox tree that also carries calendar and contact folders:
+  ```yaml
+      - MailSync__GlobalExcludedFolders__0=Calendar
+      - MailSync__GlobalExcludedFolders__1=Calendars
+      - MailSync__GlobalExcludedFolders__2=Contacts
+      - MailSync__GlobalExcludedFolders__3=AddressBook
+      - MailSync__GlobalExcludedFolders__4=Tasks
+      - MailSync__GlobalExcludedFolders__5=TaskList
+      - MailSync__GlobalExcludedFolders__6=Notes
+      - MailSync__GlobalExcludedFolders__7=NoteList
+      - MailSync__GlobalExcludedFolders__8=Journal
+  ```
+- `MailSync__ExcludeSubfolders`: Whether an exclusion entry also covers the folders below the one it names. Applies to the per-account list and the installation-wide one alike, and to both providers. Default `false`, matching the behaviour before the option existed: an entry `Deleted Items` matches only that folder, and a tree is kept out of the archive by naming its root and every folder below it. Set to `true` to have an entry take the tree underneath as well — an entry `Deleted Items` then also keeps `Deleted Items/2024` and the rest of that branch out of the archive. The rule anchors on the path separator, so it takes whole folders and never part of a name: `Archive` covers `Archive` and `Archive/Team`, and leaves a mail folder called `Team Archive Review` alone. A `.` counts as a separator too, the same way the path-suffix rule treats it.
 
 ### 📤 BatchRestore Settings
 - `BatchRestore__AsyncThreshold`: The number of emails that triggers async processing.
@@ -276,6 +301,16 @@ The optional MCP (Model Context Protocol) server exposes the same read-only mail
 - `BatchOperation__BatchSize`: The batch size for email operations.
 - `BatchOperation__PauseBetweenEmailsMs`: The pause between individual emails in milliseconds.
 - `BatchOperation__PauseBetweenBatchesMs`: The pause between batches in milliseconds.
+
+### 📤 Offload Settings
+Settings for the [date-windowed offload](Offload.md). All defaults reproduce the behaviour the application had before the feature existed, so an installation that does not configure this section is unaffected.
+- `Offload__MaxConcurrentJobs`: How many restore or offload jobs may run at the same time. Default is `1`, which keeps the strictly serial processing the job queue has always used. At most one job per target mailbox runs regardless of this value.
+- `Offload__PrefetchMaxMessages`: Upper bound on how many messages are indexed from a target mailbox for duplicate detection. Default is `500000`. Above it the check narrows to a single folder and logs that the scope was reduced.
+- `Offload__ExcludedSourceFolders__0`, `__1`, ...: Source folders that are never offloaded, matched before renaming and covering subfolders. Empty by default.
+- `Offload__FolderRenameMap__<SourceFolder>`: Rewrites the leading segments of a source folder path, for example `Offload__FolderRenameMap__Sent Items=Sent`. Empty by default.
+- `Offload__MarkAsSeen`: Whether appended mail is flagged as read. Default is `true`, matching the existing restore behaviour.
+
+Both folder settings ship empty on purpose: rewriting or dropping folders without being asked would surprise anyone already using the restore path. A run with no configuration therefore migrates everything, spam folders included, and creates a second set of special folders next to the target's own.
 
 ### 📊 Bandwidth Tracking Settings
 - `BandwidthTracking__Enabled`: Enable or disable bandwidth tracking for IMAP rate limit handling (true/false). Default is `false`. When enabled, the system tracks bandwidth usage per account and can pause synchronization when provider limits are reached. See [Rate Limit Handling](RateLimitHandling.md) for detailed information.
@@ -310,6 +345,12 @@ The optional MCP (Model Context Protocol) server exposes the same read-only mail
     - Inline CSS styles and style tags
   - This setting works independently from `DefaultToPlainText` and provides an additional layer of privacy protection when viewing HTML emails.
 
+### 📊 Dashboard Settings
+- `Dashboard__CacheSeconds`: How long computed dashboard statistics (totals, per-account counts, monthly histogram, top senders, recent emails, database size) are kept in the server's in-memory cache. Default is `60` seconds. Set to `0` to disable caching and always recompute the statistics. Higher values reduce database load in large environments at the cost of more stale numbers. Sync status badges and storage values are always fetched live and are not affected by this cache.
+
+### 🔄 Jobs Settings
+- `Jobs__RefreshSeconds`: How often the background jobs page reloads itself while a browser tab has it open. Default is `30` seconds. Set to `0` to turn the automatic reload off and refresh by hand. Each reload rebuilds the page from all eight job sources, so on installations with many accounts a longer interval keeps the load down, multiplied by every tab that is open on the page.
+
 ### 🗃️ Npgsql Settings
 - `Npgsql__CommandTimeout`: The timeout for database commands in seconds.
 
@@ -326,9 +367,20 @@ The optional MCP (Model Context Protocol) server exposes the same read-only mail
   - See [CLI Local Import Guide](CLI-Local-Import.md) for detailed usage instructions.
 
 ### 📄 CSV Import Settings
-- `CsvImport__MaxRows`: Maximum number of CSV rows (mailboxes) processed in a single bulk import. Default is `5000`. Increase this value for very large deployments; lower it to limit the impact of a single import run on database load.
+- `CsvImport__MaxRows`: Maximum number of CSV rows (mailboxes) processed in a single bulk import. Default is `5000`. Increase this value for large deployments; lower it to limit the impact of a single import run on database load.
 - `CsvImport__MaxFileSizeBytes`: Maximum allowed size (in bytes) of the uploaded CSV file. Default is `10000000` (10 MB). Adjust this value to match your upload limits if needed.
 - See [Account Import Guide](Account%20Import.md) for detailed usage instructions on bulk IMAP account import via CSV.
+
+### 📤 Audit Export Settings
+Settings for the audit data export page (admin only, reachable from the Logs page). The export generates a ZIP package with tabular mass data (INDEX.XML + CSV tables + DTD) from the existing archive for external audit tools. See the [Audit Data Export Guide](AuditExport.md) for usage details.
+- `AuditExport__DataSupplierName`: Default value for the "Data supplier name" form field that identifies your organization in the exported index file. Default: empty.
+- `AuditExport__DataSupplierLocation`: Default value for the "Data supplier location" form field (e.g. company seat). Default: empty.
+- `AuditExport__Comment`: Default value for the "Comment" form field, included as free text in the exported index file. Default: empty.
+- `AuditExport__OutputDirectory`: Directory where the generated ZIP files are stored. Relative paths are resolved against the app content root. Default: `exports/audit`.
+- `AuditExport__RetentionDays`: Number of days after which completed export files are deleted by the daily cleanup. Default: `30`.
+- `AuditExport__MaxRangeYears`: Maximum allowed span between the export period's start and end date. Default: `10`.
+- The form fields are pre-filled from these defaults but can be edited per export.
+- Every export writes a start entry and a result entry to the access log (type "Audit Data Export"), so the history is revision-safe without any DB schema change.
 
 ### 🔒 Deletion Policy Settings
 - `DeletionPolicy__DeletionAllowed`: Controls whether manual deletion of archived emails is allowed (true/false). Default is `true`. When set to `false`:
@@ -366,6 +418,7 @@ The per-account storage display shows the database storage usage (all mail field
 - `AccountStorage__DailyExecutionTime`: Time of day (24-hour format `HH:mm`) for the daily full refresh of all accounts. Default is `02:30`. Choose a time during low system activity.
 - `AccountStorage__BackfillDelayMs`: Delay (in milliseconds) between accounts during the initial backfill on startup. Default is `5000`. Lower values speed up the backfill but increase database load; raise this value for very large archives to avoid overloading the database.
 - `AccountStorage__RefreshBatchDelayMs`: Delay (in milliseconds) between accounts during the daily full refresh. Default is `1000`. Lower values speed up the refresh but increase database load; raise this value for very large archives.
+- `AccountStorage__CommandTimeoutSeconds`: Database command timeout (in seconds) for the per-account storage calculation (`pg_column_size` over all rows of an account). Default is `300` (5 minutes). The calculation reads every mail row including TOAST data, which can take well over a minute on very large archives (250k+ emails); the previous 30-second Npgsql default caused the refresh to fail silently and left the dashboard showing stale values. Raise this value if the calculation still times out on your archive.
 
 > 💡 **Note**: Storage values are refreshed immediately after each mail sync, import, or retention deletion, so the displayed values stay current even without the daily refresh. The daily refresh is a safety net that catches edge cases (e.g., direct database changes).
 

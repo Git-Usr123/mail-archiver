@@ -704,6 +704,24 @@
   <data name="ExcludedFolders" xml:space="preserve">
     <value>Foldery Wyłączone</value>
   </data>
+  <data name="GlobalExcludedFolders" xml:space="preserve">
+    <value>Wykluczone dla wszystkich kont</value>
+  </data>
+  <data name="GlobalExcludedFoldersHint" xml:space="preserve">
+    <value>Skonfigurowane dla całej instalacji i stosowane obok własnej listy konta. Nie można tu edytować.</value>
+  </data>
+  <data name="FolderAlreadyExcludedGlobally" xml:space="preserve">
+    <value>Już wykluczone dla wszystkich kont — nie ma tu nic do zmiany</value>
+  </data>
+  <data name="ExclusionsCoverSubfolders" xml:space="preserve">
+    <value>Wpis obejmuje także foldery znajdujące się poniżej wskazanego folderu.</value>
+  </data>
+  <data name="FolderAlreadyExcludedGloballyBy" xml:space="preserve">
+    <value>Już wykluczone dla wszystkich kont przez wpis „{0}” — tutaj nie ma nic do zmiany</value>
+  </data>
+  <data name="FolderCoveredByOwnEntry" xml:space="preserve">
+    <value>Już objęte wpisem „{0}” na tej liście, wraz ze wszystkim poniżej</value>
+  </data>
   <data name="EnterFolderNames" xml:space="preserve">
     <value>Wprowadź nazwy folderów oddzielone średnikami, np.: Śmieci;Spam;Kosz</value>
   </data>
@@ -1930,7 +1948,7 @@
     <value>Wychodzące wiadomości e-mail</value>
   </data>
   <data name="AccountExportJobs" xml:space="preserve">
-    <value>Account Export Jobs</value>
+    <value>Zadania eksportu kont</value>
   </data>
   <data name="FileCreated" xml:space="preserve">
     <value>Plik utworzony</value>
@@ -2519,6 +2537,9 @@
   <data name="EmailDeletionJobs" xml:space="preserve">
     <value>Zadania Usuwania E-Mail</value>
   </data>
+  <data name="AccountDeletionJobs" xml:space="preserve">
+    <value>Zadania usuwania kont</value>
+  </data>
   <data name="ShowHtml" xml:space="preserve">
   <value>Pokaż HTML</value>
   </data>
@@ -2558,6 +2579,51 @@
   <data name="RateLimited" xml:space="preserve">
     <value>Limit prędkości osiągnięty</value>
   </data>
+  <data name="TimedOut" xml:space="preserve">
+    <value>Przekroczono limit czasu</value>
+  </data>
+  <data name="LastRunTitle" xml:space="preserve">
+    <value>Ostatni przebieg synchronizacji</value>
+  </data>
+  <data name="LastRunNone" xml:space="preserve">
+    <value>Brak zakończonego przebiegu od uruchomienia aplikacji.</value>
+  </data>
+  <data name="LastRunSyncInProgress" xml:space="preserve">
+    <value>Trwa synchronizacja.</value>
+  </data>
+  <data name="LastRunSummary" xml:space="preserve">
+    <value>Zakończono {0}, czas {1}, przetworzone wiadomości: {2}, nowych: {3}.</value>
+  </data>
+  <data name="LastRunHeldBack" xml:space="preserve">
+    <value>Znacznik czasu ostatniej synchronizacji nie został przesunięty, więc następny przebieg obejmie ten sam okres.</value>
+  </data>
+  <data name="LastRunFailuresAcknowledged" xml:space="preserve">
+    <value>Błędy tego przebiegu zostały uznane, więc znacznik czasu ostatniej synchronizacji został przesunięty.</value>
+  </data>
+  <data name="LastRunResumes" xml:space="preserve">
+    <value>Przebieg został wstrzymany, a nie zakończony. Następny zacznie w miejscu, w którym ten się zatrzymał.</value>
+  </data>
+  <data name="IssueKindFolderFailed" xml:space="preserve">
+    <value>Foldery, których nie udało się odczytać</value>
+  </data>
+  <data name="IssueKindFolderMissing" xml:space="preserve">
+    <value>Foldery, których nie ma na serwerze</value>
+  </data>
+  <data name="IssueKindFolderMissingHint" xml:space="preserve">
+    <value>Zwykle są to pozostałe subskrypcje usuniętych folderów. Nieszkodliwe, ale warto je usunąć w programie pocztowym.</value>
+  </data>
+  <data name="IssueKindMessageFailed" xml:space="preserve">
+    <value>Wiadomości, których nie udało się zarchiwizować</value>
+  </data>
+  <data name="IssueNoDetails" xml:space="preserve">
+    <value>Nie zapisano szczegółów.</value>
+  </data>
+  <data name="IssueAndMore" xml:space="preserve">
+    <value>i {0} więcej</value>
+  </data>
+  <data name="LastRunHadIssuesHint" xml:space="preserve">
+    <value>Ostatni przebieg zgłosił problemy</value>
+  </data>
   <data name="SyncProgressTooltip" xml:space="preserve">
     <value>Postęp jest mierzony według ukończonych folderów. Duży folder (np. INBOX) utrzymuje pasek na 0%, dopóki się nie zakończy.</value>
   </data>
@@ -2569,6 +2635,12 @@
   </data>
   <data name="ToggleFolderTree" xml:space="preserve">
     <value>Kliknij, aby rozwinąć/zwinąć drzewo folderów</value>
+  </data>
+  <data name="ExpandAllFolders" xml:space="preserve">
+    <value>Rozwiń wszystkie foldery</value>
+  </data>
+  <data name="CollapseAllFolders" xml:space="preserve">
+    <value>Zwiń wszystkie foldery</value>
   </data>
   <data name="NoFolders" xml:space="preserve">
     <value>Brak dostępnych folderów</value>
@@ -3233,5 +3305,230 @@
   </data>
   <data name="FailuresAcknowledged" xml:space="preserve">
     <value>Błędy uznane</value>
+  </data>
+  <data name="OffloadTitle" xml:space="preserve">
+    <value>Przenieś do innej skrzynki</value>
+  </data>
+  <data name="OffloadIntro" xml:space="preserve">
+    <value>Dołącza archiwizowaną pocztę nowszą niż data odcięcia do innej skrzynki, pomijając to, co ta skrzynka już zawiera. Starsza poczta pozostaje w archiwum. Ponowne uruchomienie jest bezpieczne i nie dodaje niczego, co już dotarło.</value>
+  </data>
+  <data name="OffloadSourceAndTarget" xml:space="preserve">
+    <value>Źródło i cel</value>
+  </data>
+  <data name="SourceAccount" xml:space="preserve">
+    <value>Konto źródłowe</value>
+  </data>
+  <data name="OffloadSelectTarget" xml:space="preserve">
+    <value>Wybierz skrzynkę docelową…</value>
+  </data>
+  <data name="OffloadLoadingFolders" xml:space="preserve">
+    <value>Ładowanie folderów…</value>
+  </data>
+  <data name="OffloadSelectFolder" xml:space="preserve">
+    <value>-- Wybierz folder docelowy --</value>
+  </data>
+  <data name="OffloadErrorLoadingFolders" xml:space="preserve">
+    <value>Błąd ładowania folderów</value>
+  </data>
+  <data name="OffloadSelectTargetFirst" xml:space="preserve">
+    <value>Najpierw wybierz skrzynkę docelową</value>
+  </data>
+  <data name="OffloadTargetFolderHelp" xml:space="preserve">
+    <value>Folder główny w skrzynce docelowej. Przy INBOX struktura folderów źródłowych jest odtwarzana na najwyższym poziomie.</value>
+  </data>
+  <data name="OffloadWindow" xml:space="preserve">
+    <value>Okno dat</value>
+  </data>
+  <data name="OffloadWindowMonths" xml:space="preserve">
+    <value>Ostatnie N miesięcy</value>
+  </data>
+  <data name="OffloadWindowMonthsHelp" xml:space="preserve">
+    <value>Rozwiązywane na stałą datę przy uruchomieniu zadania, więc powtórzenie zadania wybiera tę samą pocztę. Ustaw na 0, aby użyć jawnej daty.</value>
+  </data>
+  <data name="OffloadCutoffFrom" xml:space="preserve">
+    <value>Od daty</value>
+  </data>
+  <data name="OffloadCutoffFromHelp" xml:space="preserve">
+    <value>Zastępuje okno miesięcy. Włącznie, od 00:00 tego dnia.</value>
+  </data>
+  <data name="OffloadCutoffTo" xml:space="preserve">
+    <value>Do daty (opcjonalne)</value>
+  </data>
+  <data name="OffloadCutoffToHelp" xml:space="preserve">
+    <value>Włącznie, do 23:59:59 tego dnia.</value>
+  </data>
+  <data name="OffloadOptions" xml:space="preserve">
+    <value>Opcje</value>
+  </data>
+  <data name="OffloadDryRun" xml:space="preserve">
+    <value>Przebieg próbny</value>
+  </data>
+  <data name="OffloadDryRunHelp" xml:space="preserve">
+    <value>Rozwiązuje wszystko i raportuje na folder, co by się stało, ale nic nie dołącza. Zalecane przed właściwym uruchomieniem.</value>
+  </data>
+  <data name="OffloadMarkAsSeen" xml:space="preserve">
+    <value>Oznacz dołączoną pocztę jako przeczytaną</value>
+  </data>
+  <data name="OffloadMarkAsSeenHelp" xml:space="preserve">
+    <value>Wyłączenie tej opcji sprawia, że nieprzeczytana poczta pozostaje nieprzeczytana w skrzynce docelowej.</value>
+  </data>
+  <data name="OffloadFolderHandling" xml:space="preserve">
+    <value>Obsługa folderów</value>
+  </data>
+  <data name="OffloadExcludedFolders" xml:space="preserve">
+    <value>Wykluczone foldery źródłowe</value>
+  </data>
+  <data name="OffloadRenameMap" xml:space="preserve">
+    <value>Mapa zmiany nazw folderów</value>
+  </data>
+  <data name="OffloadNoneConfigured" xml:space="preserve">
+    <value>brak konfiguracji</value>
+  </data>
+  <data name="OffloadFolderHandlingHelp" xml:space="preserve">
+    <value>Oba konfiguruje się w sekcji Offload w appsettings.json i są domyślnie puste. Wykluczenia są stosowane przed zmianą nazwy i obejmują podfoldery.</value>
+  </data>
+  <data name="OffloadStart" xml:space="preserve">
+    <value>Rozpocznij przenoszenie</value>
+  </data>
+  <data name="OffloadNoTargets" xml:space="preserve">
+    <value>Brak innego konta IMAP jako celu. Najpierw utwórz takie konto.</value>
+  </data>
+  <data name="OffloadNoTargetsAssigned" xml:space="preserve">
+    <value>Żadna ze skrzynek Ci przypisanych nie może być celem. Poproś administratora o przypisanie innego konta IMAP.</value>
+  </data>
+  <data name="OffloadTargetRequired" xml:space="preserve">
+    <value>Wybierz skrzynkę docelową.</value>
+  </data>
+  <data name="OffloadTargetMustDiffer" xml:space="preserve">
+    <value>Skrzynka docelowa musi się różnić od źródłowej.</value>
+  </data>
+  <data name="OffloadTargetNotFound" xml:space="preserve">
+    <value>Wybrana skrzynka docelowa już nie istnieje.</value>
+  </data>
+  <data name="OffloadTargetMustBeImap" xml:space="preserve">
+    <value>Skrzynka docelowa musi być kontem IMAP.</value>
+  </data>
+  <data name="OffloadCutoffRequired" xml:space="preserve">
+    <value>Podaj okno miesięcy lub datę od.</value>
+  </data>
+  <data name="OffloadCutoffToBeforeFrom" xml:space="preserve">
+    <value>Data „do” nie może być wcześniejsza niż data „od”.</value>
+  </data>
+  <data name="OffloadNothingInWindow" xml:space="preserve">
+    <value>Żadna zarchiwizowana poczta nie mieści się w tym oknie dat.</value>
+  </data>
+  <data name="OffloadQueued" xml:space="preserve">
+    <value>Przenoszenie w kolejce dla {0} wiadomości.</value>
+  </data>
+  <data name="OffloadDryRunQueued" xml:space="preserve">
+    <value>Przebieg próbny w kolejce dla {0} wiadomości. Nic nie zostanie dołączone.</value>
+  </data>
+  <data name="OffloadAppended" xml:space="preserve">
+    <value>Dołączone</value>
+  </data>
+  <data name="OffloadAlreadyPresent" xml:space="preserve">
+    <value>Już obecne</value>
+  </data>
+  <data name="OffloadByFingerprint" xml:space="preserve">
+    <value>dopasowane przez odcisk</value>
+  </data>
+  <data name="OffloadExcluded" xml:space="preserve">
+    <value>Wykluczony folder</value>
+  </data>
+  <data name="OffloadReport" xml:space="preserve">
+    <value>Raport przenoszenia</value>
+  </data>
+  <data name="OffloadJob" xml:space="preserve">
+    <value>Przenoszenie</value>
+  </data>
+
+  <data name="AuditExport" xml:space="preserve">
+    <value>Eksport danych audytowych</value>
+  </data>
+  <data name="AuditExportHistory" xml:space="preserve">
+    <value>Historia eksportów</value>
+  </data>
+  <data name="Mailbox" xml:space="preserve">
+    <value>Skrzynka pocztowa</value>
+  </data>
+  <data name="AllMailboxes" xml:space="preserve">
+    <value>Wszystkie skrzynki pocztowe</value>
+  </data>
+  <data name="AttachmentMetadata" xml:space="preserve">
+    <value>Metadane załączników</value>
+  </data>
+  <data name="IncludeAttachmentMetadata" xml:space="preserve">
+    <value>Dołącz tabelę metadanych załączników</value>
+  </data>
+  <data name="DataSupplierName" xml:space="preserve">
+    <value>Nazwa dostawcy danych</value>
+  </data>
+  <data name="DataSupplierLocation" xml:space="preserve">
+    <value>Lokalizacja dostawcy danych</value>
+  </data>
+  <data name="NoAuditExportsYet" xml:space="preserve">
+    <value>Brak eksportów</value>
+  </data>
+  <data name="Period" xml:space="preserve">
+    <value>Okres</value>
+  </data>
+
+  <data name="Comment" xml:space="preserve">
+    <value>Komentarz</value>
+  </data>
+  <data name="AuditExportInvalidPeriod" xml:space="preserve">
+    <value>Nieprawidłowy okres: wymagana jest data rozpoczęcia i zakończenia.</value>
+  </data>
+  <data name="AuditExportRangeTooLong" xml:space="preserve">
+    <value>Okres nie może przekraczać {0} lat.</value>
+  </data>
+  <data name="AuditExportAccountNotFound" xml:space="preserve">
+    <value>Nie znaleziono wybranej skrzynki pocztowej.</value>
+  </data>
+  <data name="AuditExportFileNotFound" xml:space="preserve">
+    <value>Nie znaleziono pliku eksportu lub plik nie jest już dostępny.</value>
+  </data>
+
+  <data name="BackToLogs" xml:space="preserve">
+    <value>Powrót do logów</value>
+  </data>
+  <data name="ExportSettings" xml:space="preserve">
+    <value>Ustawienia eksportu</value>
+  </data>
+  <data name="CancelExportConfirm" xml:space="preserve">
+    <value>Anulować ten eksport?</value>
+  </data>
+  <data name="FailedFilesTitle" xml:space="preserve">
+    <value>Pliki zakończone błędem ({0})</value>
+  </data>
+  <data name="FailedFilesTruncated" xml:space="preserve">
+    <value>Wyświetlono tylko pierwsze 200 plików zakończonych błędem. Pełna lista znajduje się w logach Dockera.</value>
+  </data>
+  <data name="FailedFilesReason_BannerLine" xml:space="preserve">
+    <value>Niestandardowa linia baneru przed nagłówkami wiadomości (np. eksport PST z MailStore)</value>
+  </data>
+  <data name="FailedFilesReason_MboxFromLine" xml:space="preserve">
+    <value>Pozostałość linii znacznika mbox &apos;From &apos;</value>
+  </data>
+  <data name="FailedFilesReason_SplitHeaderBlock" xml:space="preserve">
+    <value>Blok nagłówków podzielony pustymi liniami</value>
+  </data>
+  <data name="FailedFilesReason_JunkBeforeHeaders" xml:space="preserve">
+    <value>Linie nie do interpretacji przed nagłówkami wiadomości</value>
+  </data>
+  <data name="FailedFilesReason_UnparseableHeaders" xml:space="preserve">
+    <value>Nie udało się zinterpretować nagłówków wiadomości</value>
+  </data>
+  <data name="FailedFilesReason_Generic" xml:space="preserve">
+    <value>Błąd podczas przetwarzania pliku</value>
+  </data>
+  <data name="RecoveredLabel" xml:space="preserve">
+    <value>Odzyskane:</value>
+  </data>
+  <data name="RecoveredTitle" xml:space="preserve">
+    <value>Odzyskane e-maile</value>
+  </data>
+  <data name="RecoveredSummary" xml:space="preserve">
+    <value>{0} e-mail(i) z niestandardowymi nagłówkami zostało automatycznie naprawionych i zarchiwizowanych.</value>
   </data>
 </root>

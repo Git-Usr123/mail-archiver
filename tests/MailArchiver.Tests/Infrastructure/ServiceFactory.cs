@@ -24,6 +24,36 @@ internal static class ServiceFactory
             new DateTimeHelper(Options.Create(new TimeZoneOptions { DisplayTimeZoneId = "Europe/Berlin" })),
             Options.Create(new BatchOperationOptions()));
 
+    /// <summary>
+    /// Creates an EmailCoreService with dashboard caching disabled so integration
+    /// tests always see freshly computed statistics.
+    /// </summary>
+    public static EmailCoreService CreateEmailCoreServiceNoCache(MailArchiverDbContext ctx) =>
+        new(ctx,
+            NullLogger<EmailCoreService>.Instance,
+            new DateTimeHelper(Options.Create(new TimeZoneOptions { DisplayTimeZoneId = "Europe/Berlin" })),
+            Options.Create(new BatchOperationOptions()),
+            Options.Create(new Models.DashboardOptions { CacheSeconds = 0 }),
+            memoryCache: null);
+
+    /// <summary>
+    /// Creates an EmailCoreService whose dashboard cache is backed by a MemoryCache with a
+    /// small SizeLimit, so eviction behavior can be asserted without touching DI.
+    /// </summary>
+    public static (EmailCoreService Service, Microsoft.Extensions.Caching.Memory.IMemoryCache Cache)
+        CreateEmailCoreServiceWithSizeLimitedCache(MailArchiverDbContext ctx, long sizeLimit)
+    {
+        var cache = new Microsoft.Extensions.Caching.Memory.MemoryCache(
+            new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions { SizeLimit = sizeLimit });
+        var svc = new EmailCoreService(ctx,
+            NullLogger<EmailCoreService>.Instance,
+            new DateTimeHelper(Options.Create(new TimeZoneOptions { DisplayTimeZoneId = "Europe/Berlin" })),
+            Options.Create(new BatchOperationOptions()),
+            Options.Create(new Models.DashboardOptions { CacheSeconds = 60 }),
+            memoryCache: cache);
+        return (svc, cache);
+    }
+
     public static BandwidthService CreateBandwidthService(MailArchiverDbContext ctx, BandwidthTrackingOptions? options = null) =>
         new(ctx,
             NullLogger<BandwidthService>.Instance,
@@ -39,6 +69,21 @@ internal static class ServiceFactory
         new(ctx,
             NullLogger<AccountStorageService>.Instance,
             new ConfigurationBuilder().Build());
+
+    public static MailArchiver.Services.Providers.Imap.ImapMailRestorer CreateImapMailRestorer(
+        MailArchiverDbContext ctx,
+        BatchOperationOptions? batchOptions = null,
+        OffloadOptions? offloadOptions = null) =>
+            new(ctx,
+            NullLogger<MailArchiver.Services.Providers.Imap.ImapMailRestorer>.Instance,
+            // OffloadEmailsAsync fails before opening a connection for an unreachable target,
+            // so the connection factory is never exercised by these tests. The folder service
+            // is only reached after a successful connection, so it stays null here too.
+            connectionFactory: null!,
+            new DateTimeHelper(Options.Create(new TimeZoneOptions { DisplayTimeZoneId = "Europe/Berlin" })),
+            Options.Create(batchOptions ?? new BatchOperationOptions()),
+            Options.Create(offloadOptions ?? new OffloadOptions()),
+            folderService: null!);
 
     /// <summary>
     /// Builds a <see cref="ServiceProvider"/> that resolves the shared

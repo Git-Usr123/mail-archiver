@@ -13,8 +13,12 @@ namespace MailArchiver.Services.Providers
         /// </summary>
         /// <param name="account">The M365 mail account</param>
         /// <param name="jobId">Optional sync job ID for progress tracking</param>
+        /// <param name="cancellationToken">
+        /// Cancels the sync. The background service passes the per-account sync timeout here, so a
+        /// long-running sync can be stopped between message batches instead of only between folders.
+        /// </param>
         /// <returns>Task</returns>
-        Task SyncMailAccountAsync(MailAccount account, string? jobId = null);
+        Task SyncMailAccountAsync(MailAccount account, string? jobId = null, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Tests the connection to Microsoft Graph API
@@ -38,6 +42,9 @@ namespace MailArchiver.Services.Providers
         /// <param name="account">The M365 mail account</param>
         /// <returns>List of folder names</returns>
         Task<List<string>> GetMailFoldersAsync(MailAccount account);
+
+        /// <inheritdoc cref="IProviderEmailService.GetMailFolderDetailsAsync"/>
+        Task<List<MailFolderInfo>> GetMailFolderDetailsAsync(MailAccount account);
 
         /// <summary>
         /// Restores an email to a specific folder using Microsoft Graph API

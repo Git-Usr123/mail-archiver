@@ -649,6 +649,24 @@
   <data name="ExcludedFolders" xml:space="preserve">
     <value>Cartelle escluse</value>
   </data>
+  <data name="GlobalExcludedFolders" xml:space="preserve">
+    <value>Escluse per tutti gli account</value>
+  </data>
+  <data name="GlobalExcludedFoldersHint" xml:space="preserve">
+    <value>Configurato a livello di installazione e applicato in aggiunta all'elenco dell'account. Non modificabile qui.</value>
+  </data>
+  <data name="FolderAlreadyExcludedGlobally" xml:space="preserve">
+    <value>Già esclusa per tutti gli account — qui non c'è nulla da modificare</value>
+  </data>
+  <data name="ExclusionsCoverSubfolders" xml:space="preserve">
+    <value>Una voce comprende anche le cartelle sottostanti a quella indicata.</value>
+  </data>
+  <data name="FolderAlreadyExcludedGloballyBy" xml:space="preserve">
+    <value>Già escluso per tutti gli account dalla voce “{0}”: qui non c'è nulla da modificare</value>
+  </data>
+  <data name="FolderCoveredByOwnEntry" xml:space="preserve">
+    <value>Già coperto dalla voce “{0}” in questo elenco, insieme a tutto ciò che si trova sotto</value>
+  </data>
   <data name="EnterFolderNames" xml:space="preserve">
     <value>Inserisci nomi cartelle separati da punto e virgola, es: Junk;Spam;Trash</value>
   </data>
@@ -2455,6 +2473,9 @@
   <data name="EmailDeletionJobs" xml:space="preserve">
     <value>Lavori di eliminazione email</value>
   </data>
+  <data name="AccountDeletionJobs" xml:space="preserve">
+    <value>Eliminazioni di account</value>
+  </data>
   <data name="EmailDeletionProgress" xml:space="preserve">
     <value>Progresso eliminazione email</value>
   </data>
@@ -2512,6 +2533,51 @@
   <data name="RateLimited" xml:space="preserve">
     <value>Limite di velocità raggiunto</value>
   </data>
+  <data name="TimedOut" xml:space="preserve">
+    <value>Tempo scaduto</value>
+  </data>
+  <data name="LastRunTitle" xml:space="preserve">
+    <value>Ultima sincronizzazione</value>
+  </data>
+  <data name="LastRunNone" xml:space="preserve">
+    <value>Nessuna esecuzione completata dall'avvio dell'applicazione.</value>
+  </data>
+  <data name="LastRunSyncInProgress" xml:space="preserve">
+    <value>È in corso una sincronizzazione.</value>
+  </data>
+  <data name="LastRunSummary" xml:space="preserve">
+    <value>Terminato {0}, durata {1}, messaggi elaborati: {2}, nuovi: {3}.</value>
+  </data>
+  <data name="LastRunHeldBack" xml:space="preserve">
+    <value>La marca temporale dell'ultima sincronizzazione non è avanzata, quindi la prossima esecuzione coprirà lo stesso periodo.</value>
+  </data>
+  <data name="LastRunFailuresAcknowledged" xml:space="preserve">
+    <value>Gli errori di questa esecuzione sono stati riconosciuti, quindi la marca temporale dell'ultima sincronizzazione è avanzata.</value>
+  </data>
+  <data name="LastRunResumes" xml:space="preserve">
+    <value>L'esecuzione è stata messa in pausa, non completata. La successiva riprenderà da dove questa si è fermata.</value>
+  </data>
+  <data name="IssueKindFolderFailed" xml:space="preserve">
+    <value>Cartelle non leggibili</value>
+  </data>
+  <data name="IssueKindFolderMissing" xml:space="preserve">
+    <value>Cartelle inesistenti sul server</value>
+  </data>
+  <data name="IssueKindFolderMissingHint" xml:space="preserve">
+    <value>Di solito sono sottoscrizioni rimaste di cartelle eliminate. Innocuo, ma conviene ripulirle nel programma di posta.</value>
+  </data>
+  <data name="IssueKindMessageFailed" xml:space="preserve">
+    <value>Messaggi non archiviabili</value>
+  </data>
+  <data name="IssueNoDetails" xml:space="preserve">
+    <value>Nessun dettaglio registrato.</value>
+  </data>
+  <data name="IssueAndMore" xml:space="preserve">
+    <value>e altri {0}</value>
+  </data>
+  <data name="LastRunHadIssuesHint" xml:space="preserve">
+    <value>L'ultima esecuzione ha segnalato problemi</value>
+  </data>
   <data name="SyncProgressTooltip" xml:space="preserve">
     <value>Il progresso è misurato in base alle cartelle completate. Una cartella grande (es. INBOX) mantiene la barra a 0% fino al termine.</value>
   </data>
@@ -2523,6 +2589,12 @@
   </data>
   <data name="ToggleFolderTree" xml:space="preserve">
     <value>Fai clic per espandere/comprimere l'albero delle cartelle</value>
+  </data>
+  <data name="ExpandAllFolders" xml:space="preserve">
+    <value>Espandi tutte le cartelle</value>
+  </data>
+  <data name="CollapseAllFolders" xml:space="preserve">
+    <value>Comprimi tutte le cartelle</value>
   </data>
   <data name="NoFolders" xml:space="preserve">
     <value>Nessuna cartella disponibile</value>
@@ -3187,5 +3259,230 @@
   </data>
   <data name="FailuresAcknowledged" xml:space="preserve">
     <value>Errori riconosciuti</value>
+  </data>
+  <data name="OffloadTitle" xml:space="preserve">
+    <value>Scarica in un'altra casella</value>
+  </data>
+  <data name="OffloadIntro" xml:space="preserve">
+    <value>Aggiunge la posta archiviata più recente di una data di taglio in un'altra casella, saltando ciò che quella casella contiene già. La posta più vecchia resta nell'archivio. Rieseguirlo è sicuro e non aggiunge nulla di già arrivato.</value>
+  </data>
+  <data name="OffloadSourceAndTarget" xml:space="preserve">
+    <value>Origine e destinazione</value>
+  </data>
+  <data name="SourceAccount" xml:space="preserve">
+    <value>Account di origine</value>
+  </data>
+  <data name="OffloadSelectTarget" xml:space="preserve">
+    <value>Seleziona una casella di destinazione…</value>
+  </data>
+  <data name="OffloadLoadingFolders" xml:space="preserve">
+    <value>Caricamento cartelle…</value>
+  </data>
+  <data name="OffloadSelectFolder" xml:space="preserve">
+    <value>-- Seleziona una cartella di destinazione --</value>
+  </data>
+  <data name="OffloadErrorLoadingFolders" xml:space="preserve">
+    <value>Errore nel caricamento delle cartelle</value>
+  </data>
+  <data name="OffloadSelectTargetFirst" xml:space="preserve">
+    <value>Selezionare prima una casella di destinazione</value>
+  </data>
+  <data name="OffloadTargetFolderHelp" xml:space="preserve">
+    <value>Cartella radice nella casella di destinazione. Con INBOX la struttura delle cartelle di origine viene ricreata al livello principale.</value>
+  </data>
+  <data name="OffloadWindow" xml:space="preserve">
+    <value>Finestra date</value>
+  </data>
+  <data name="OffloadWindowMonths" xml:space="preserve">
+    <value>Ultimi N mesi</value>
+  </data>
+  <data name="OffloadWindowMonthsHelp" xml:space="preserve">
+    <value>Risolto in una data fissa all'avvio del job, così rieseguire il job seleziona la stessa posta. Imposta a 0 per usare una data esplicita.</value>
+  </data>
+  <data name="OffloadCutoffFrom" xml:space="preserve">
+    <value>Data da</value>
+  </data>
+  <data name="OffloadCutoffFromHelp" xml:space="preserve">
+    <value>Sostituisce la finestra dei mesi. Inclusivo, dalle 00:00 di questo giorno.</value>
+  </data>
+  <data name="OffloadCutoffTo" xml:space="preserve">
+    <value>Data a (facoltativo)</value>
+  </data>
+  <data name="OffloadCutoffToHelp" xml:space="preserve">
+    <value>Inclusivo, fino alle 23:59:59 di questo giorno.</value>
+  </data>
+  <data name="OffloadOptions" xml:space="preserve">
+    <value>Opzioni</value>
+  </data>
+  <data name="OffloadDryRun" xml:space="preserve">
+    <value>Esecuzione di prova</value>
+  </data>
+  <data name="OffloadDryRunHelp" xml:space="preserve">
+    <value>Risolve tutto e segnala per cartella cosa accadrebbe, ma non aggiunge nulla. Consigliato prima di un'esecuzione reale.</value>
+  </data>
+  <data name="OffloadMarkAsSeen" xml:space="preserve">
+    <value>Segna la posta aggiunta come letta</value>
+  </data>
+  <data name="OffloadMarkAsSeenHelp" xml:space="preserve">
+    <value>Disattivandolo la posta non letta resta non letta nella casella di destinazione.</value>
+  </data>
+  <data name="OffloadFolderHandling" xml:space="preserve">
+    <value>Gestione cartelle</value>
+  </data>
+  <data name="OffloadExcludedFolders" xml:space="preserve">
+    <value>Cartelle di origine escluse</value>
+  </data>
+  <data name="OffloadRenameMap" xml:space="preserve">
+    <value>Mappa di rinomina cartelle</value>
+  </data>
+  <data name="OffloadNoneConfigured" xml:space="preserve">
+    <value>nessuno configurato</value>
+  </data>
+  <data name="OffloadFolderHandlingHelp" xml:space="preserve">
+    <value>Entrambi sono configurati nella sezione Offload di appsettings.json e sono vuoti per impostazione predefinita. Le esclusioni sono applicate prima della rinomina e coprono le sottocartelle.</value>
+  </data>
+  <data name="OffloadStart" xml:space="preserve">
+    <value>Avvia scaricamento</value>
+  </data>
+  <data name="OffloadNoTargets" xml:space="preserve">
+    <value>Nessun altro account IMAP disponibile come destinazione. Crearne uno prima.</value>
+  </data>
+  <data name="OffloadNoTargetsAssigned" xml:space="preserve">
+    <value>Nessuna delle caselle assegnate a te può essere usata come destinazione. Chiedi a un amministratore di assegnarti un altro account IMAP.</value>
+  </data>
+  <data name="OffloadTargetRequired" xml:space="preserve">
+    <value>Scegliere una casella di destinazione.</value>
+  </data>
+  <data name="OffloadTargetMustDiffer" xml:space="preserve">
+    <value>La casella di destinazione deve essere diversa dall'origine.</value>
+  </data>
+  <data name="OffloadTargetNotFound" xml:space="preserve">
+    <value>La casella di destinazione selezionata non esiste più.</value>
+  </data>
+  <data name="OffloadTargetMustBeImap" xml:space="preserve">
+    <value>La casella di destinazione deve essere un account IMAP.</value>
+  </data>
+  <data name="OffloadCutoffRequired" xml:space="preserve">
+    <value>Fornire una finestra di mesi o una data di inizio.</value>
+  </data>
+  <data name="OffloadCutoffToBeforeFrom" xml:space="preserve">
+    <value>La data di fine non deve essere precedente alla data di inizio.</value>
+  </data>
+  <data name="OffloadNothingInWindow" xml:space="preserve">
+    <value>Nessuna posta archiviata rientra in quella finestra di date.</value>
+  </data>
+  <data name="OffloadQueued" xml:space="preserve">
+    <value>Scaricamento accodato per {0} messaggi.</value>
+  </data>
+  <data name="OffloadDryRunQueued" xml:space="preserve">
+    <value>Esecuzione di prova accodata per {0} messaggi. Non sarà aggiunto nulla.</value>
+  </data>
+  <data name="OffloadAppended" xml:space="preserve">
+    <value>Aggiunti</value>
+  </data>
+  <data name="OffloadAlreadyPresent" xml:space="preserve">
+    <value>Già presenti</value>
+  </data>
+  <data name="OffloadByFingerprint" xml:space="preserve">
+    <value>corrispondenza per impronta</value>
+  </data>
+  <data name="OffloadExcluded" xml:space="preserve">
+    <value>Cartella esclusa</value>
+  </data>
+  <data name="OffloadReport" xml:space="preserve">
+    <value>Report scaricamento</value>
+  </data>
+  <data name="OffloadJob" xml:space="preserve">
+    <value>Scaricamento</value>
+  </data>
+
+  <data name="AuditExport" xml:space="preserve">
+    <value>Esportazione dati di audit</value>
+  </data>
+  <data name="AuditExportHistory" xml:space="preserve">
+    <value>Cronologia delle esportazioni</value>
+  </data>
+  <data name="Mailbox" xml:space="preserve">
+    <value>Casella di posta</value>
+  </data>
+  <data name="AllMailboxes" xml:space="preserve">
+    <value>Tutte le caselle di posta</value>
+  </data>
+  <data name="AttachmentMetadata" xml:space="preserve">
+    <value>Metadati degli allegati</value>
+  </data>
+  <data name="IncludeAttachmentMetadata" xml:space="preserve">
+    <value>Includi la tabella dei metadati degli allegati</value>
+  </data>
+  <data name="DataSupplierName" xml:space="preserve">
+    <value>Nome del fornitore dei dati</value>
+  </data>
+  <data name="DataSupplierLocation" xml:space="preserve">
+    <value>Luogo del fornitore dei dati</value>
+  </data>
+  <data name="NoAuditExportsYet" xml:space="preserve">
+    <value>Nessuna esportazione</value>
+  </data>
+  <data name="Period" xml:space="preserve">
+    <value>Periodo</value>
+  </data>
+
+  <data name="Comment" xml:space="preserve">
+    <value>Commento</value>
+  </data>
+  <data name="AuditExportInvalidPeriod" xml:space="preserve">
+    <value>Periodo non valido: sono richiesti la data di inizio e di fine.</value>
+  </data>
+  <data name="AuditExportRangeTooLong" xml:space="preserve">
+    <value>Il periodo non deve superare i {0} anni.</value>
+  </data>
+  <data name="AuditExportAccountNotFound" xml:space="preserve">
+    <value>La casella di posta selezionata non è stata trovata.</value>
+  </data>
+  <data name="AuditExportFileNotFound" xml:space="preserve">
+    <value>Il file di esportazione non è stato trovato o non è più disponibile.</value>
+  </data>
+
+  <data name="BackToLogs" xml:space="preserve">
+    <value>Torna ai log</value>
+  </data>
+  <data name="ExportSettings" xml:space="preserve">
+    <value>Impostazioni di esportazione</value>
+  </data>
+  <data name="CancelExportConfirm" xml:space="preserve">
+    <value>Annullare questa esportazione?</value>
+  </data>
+  <data name="FailedFilesTitle" xml:space="preserve">
+    <value>File non riusciti ({0})</value>
+  </data>
+  <data name="FailedFilesTruncated" xml:space="preserve">
+    <value>Vengono elencati solo i primi 200 file non riusciti. Consulta i log di Docker per l&apos;elenco completo.</value>
+  </data>
+  <data name="FailedFilesReason_BannerLine" xml:space="preserve">
+    <value>Riga di banner non standard prima delle intestazioni dell&apos;email (es. esportazione PST di MailStore)</value>
+  </data>
+  <data name="FailedFilesReason_MboxFromLine" xml:space="preserve">
+    <value>Riga di marcatore mbox &apos;From &apos; residua</value>
+  </data>
+  <data name="FailedFilesReason_SplitHeaderBlock" xml:space="preserve">
+    <value>Blocco di intestazioni diviso da righe vuote</value>
+  </data>
+  <data name="FailedFilesReason_JunkBeforeHeaders" xml:space="preserve">
+    <value>Righe non interpretabili prima delle intestazioni dell&apos;email</value>
+  </data>
+  <data name="FailedFilesReason_UnparseableHeaders" xml:space="preserve">
+    <value>Impossibile interpretare le intestazioni dell&apos;email</value>
+  </data>
+  <data name="FailedFilesReason_Generic" xml:space="preserve">
+    <value>Errore durante l&apos;elaborazione del file</value>
+  </data>
+  <data name="RecoveredLabel" xml:space="preserve">
+    <value>Recuperate:</value>
+  </data>
+  <data name="RecoveredTitle" xml:space="preserve">
+    <value>Email recuperate</value>
+  </data>
+  <data name="RecoveredSummary" xml:space="preserve">
+    <value>{0} email con intestazioni non standard sono state riparate automaticamente e archiviate.</value>
   </data>
 </root>

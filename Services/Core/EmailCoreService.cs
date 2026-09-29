@@ -5,6 +5,7 @@ using MailArchiver.Services.Shared;
 using MailArchiver.Utilities;
 using MailArchiver.ViewModels;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using MimeKit;
 using System.Globalization;
@@ -23,17 +24,23 @@ namespace MailArchiver.Services.Core
         private readonly ILogger<EmailCoreService> _logger;
         private readonly DateTimeHelper _dateTimeHelper;
         private readonly BatchOperationOptions _batchOptions;
+        private readonly DashboardOptions _dashboardOptions;
+        private readonly IMemoryCache _memoryCache;
 
         public EmailCoreService(
             MailArchiverDbContext context,
             ILogger<EmailCoreService> logger,
             DateTimeHelper dateTimeHelper,
-            IOptions<BatchOperationOptions> batchOptions)
+            IOptions<BatchOperationOptions> batchOptions,
+            IOptions<DashboardOptions>? dashboardOptions = null,
+            IMemoryCache? memoryCache = null)
         {
             _context = context;
             _logger = logger;
             _dateTimeHelper = dateTimeHelper;
             _batchOptions = batchOptions.Value;
+            _dashboardOptions = dashboardOptions?.Value ?? new DashboardOptions();
+            _memoryCache = memoryCache ?? new MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions());
         }
 
         #region Search Methods
@@ -944,9 +951,9 @@ namespace MailArchiver.Services.Core
             }
 
             message.Date = _dateTimeHelper.ToDisplayTimeZoneOffset(email.SentDate);
-            // Normalize the stored Message-ID (legacy Graph rows may carry surrounding
-            // angle brackets) so MimeKit emits a single well-formed bracket pair.
-            message.MessageId = MailContentHelper.NormalizeMessageId(email.MessageId);
+            // Apply the stored Message-ID only when it normalizes to a usable value;
+            // MailKit 4.17.0 throws on an empty one (M3).
+            MailContentHelper.ApplyRestorableMessageId(message, email.MessageId);
 
             await Task.Run(() => message.WriteTo(ms));
         }
@@ -955,18 +962,45 @@ namespace MailArchiver.Services.Core
 
         #region Dashboard Methods
 
-        public async Task<DashboardViewModel> GetDashboardStatisticsAsync()
+        /// <summary>
+        /// How many accounts the dashboard panel shows. Roughly what fits beside the ten most
+        /// recent emails on a 1080p screen.
+        /// </summary>
+        internal const int DashboardAccountRows = 25;
+
+        /// <summary>
+        /// Picks the accounts the dashboard panel shows and puts the ones whose last run reported
+        /// something at the top, then orders by last sync descending.
+        ///
+        /// Ordering by last sync alone drops exactly the accounts worth looking at. A run that
+        /// failed messages or folders does not advance LastSync, so such an account keeps sinking
+        /// while the healthy ones move up on every cycle, and on an installation with more
+        /// accounts than rows it leaves the panel altogether. Missing folders do not hold the
+        /// timestamp back, so that milder case stayed visible while the worse one did not.
+        ///
+        /// The issue flag comes from the in-process last-run index and not from a column, so the
+        /// order cannot be expressed in SQL. Hence two passes: two columns for every account, the
+        /// decision in memory, and the per-account message count only for the rows that survive
+        /// it. The expensive projection still runs over <see cref="DashboardAccountRows"/> rows,
+        /// which is the point of capping it in the first place.
+        /// </summary>
+        internal static List<AccountStatistics> BuildAccountPanel(
+            IQueryable<MailAccount> accounts,
+            Func<int, bool> lastRunHadIssues)
         {
-            var model = new DashboardViewModel();
+            var candidates = accounts
+                .Select(a => new { a.Id, a.LastSync })
+                .ToList();
 
-            model.TotalEmails = await _context.ArchivedEmails.CountAsync();
-            model.TotalAccounts = await _context.MailAccounts.CountAsync();
-            model.TotalAttachments = await _context.EmailAttachments.CountAsync();
+            var chosen = candidates
+                .OrderByDescending(a => lastRunHadIssues(a.Id))
+                .ThenByDescending(a => a.LastSync)
+                .Take(DashboardAccountRows)
+                .Select(a => a.Id)
+                .ToList();
 
-            var totalDatabaseSizeBytes = await GetDatabaseSizeAsync();
-            model.TotalStorageUsed = FormatFileSize(totalDatabaseSizeBytes);
-
-            model.EmailsPerAccount = await _context.MailAccounts
+            var rows = accounts
+                .Where(a => chosen.Contains(a.Id))
                 .Select(a => new AccountStatistics
                 {
                     AccountId = a.Id,
@@ -977,58 +1011,206 @@ namespace MailArchiver.Services.Core
                     IsEnabled = a.IsEnabled,
                     Provider = a.Provider
                 })
-                .ToListAsync();
+                .ToDictionary(a => a.AccountId);
 
+            // Contains() carries no order, and the order is the whole point here. An account
+            // deleted between the two passes is simply not in the second one.
+            return chosen
+                .Where(rows.ContainsKey)
+                .Select(id => rows[id])
+                .ToList();
+        }
+
+        /// <summary>
+        /// Applies the panel rule of <see cref="BuildAccountPanel"/> to already-built rows. The
+        /// panel is cached for <see cref="DashboardOptions.CacheSeconds"/> but the issue flag is
+        /// read per request, so a cached order can go stale the moment a run finishes or a failure
+        /// is acknowledged. Re-sorting the decorated rows right before they are shown keeps the
+        /// order and the marker on the same data; the rows themselves stay cached, only the
+        /// ordering work repeats.
+        /// </summary>
+        internal static void ApplyPanelOrder(
+            List<AccountStatistics> rows,
+            Func<int, bool> lastRunHadIssues)
+        {
+            if (rows == null || rows.Count < 2)
+                return;
+
+            var ordered = rows
+                .OrderByDescending(a => lastRunHadIssues(a.AccountId))
+                .ThenByDescending(a => a.LastSyncTime)
+                .ToList();
+
+            rows.Clear();
+            rows.AddRange(ordered);
+        }
+
+        /// <param name="lastRunHadIssues">
+        /// Whether an account's last finished run reported anything. Comes from the caller because
+        /// it lives in the sync job service and not in the database. Null orders by last sync
+        /// alone, which is what a caller without that index gets.
+        /// </param>
+        public async Task<DashboardViewModel> GetDashboardStatisticsAsync(
+            Func<int, bool>? lastRunHadIssues = null)
+        {
+            var hasIssues = lastRunHadIssues ?? (_ => false);
+            return await GetOrCreateCachedStatisticsAsync("admin", queryable =>
+                new DashboardViewModel
+                {
+                    TotalEmails = queryable.ArchivedEmails.Count(),
+                    TotalAccounts = queryable.MailAccounts.Count(),
+                    TotalAttachments = queryable.EmailAttachments.Count(),
+                    // The panel sits next to the ten most recent emails and is meant to be read at
+                    // a glance, not to be a second account list: that one is one click away and
+                    // pages. Accounts that never completed a sync sort last by their epoch
+                    // timestamp, which is where they belong when mailboxes are provisioned
+                    // disabled and switched on later.
+                    EmailsPerAccount = BuildAccountPanel(queryable.MailAccounts, hasIssues),
+                    EmailsByMonth = BuildEmailsByMonth(queryable.ArchivedEmails),
+                    TopSenders = queryable.ArchivedEmails
+                        .Where(e => !e.IsOutgoing)
+                        .GroupBy(e => e.From)
+                        .Select(g => new EmailCountByAddress
+                        {
+                            EmailAddress = g.Key,
+                            Count = g.Count()
+                        })
+                        .OrderByDescending(e => e.Count)
+                        .Take(10)
+                        .ToList(),
+                    RecentEmails = queryable.ArchivedEmails
+                        .OrderByDescending(e => e.SentDate)
+                        .Select(e => new RecentEmailDto
+                        {
+                            Id = e.Id,
+                            Subject = e.Subject,
+                            From = e.From,
+                            SentDate = e.SentDate,
+                            IsOutgoing = e.IsOutgoing,
+                            MailAccountName = e.MailAccount.Name
+                        })
+                        .Take(10)
+                        .ToList()
+                });
+        }
+
+        /// <summary>
+        /// Computes or fetches cached dashboard statistics. The factory receives the
+        /// DbContext so it can build queries; values are enumerated synchronously on
+        /// a background thread (EF does not allow parallel async evaluation inside a
+        /// single context). The result is cached for <see cref="DashboardOptions.CacheSeconds"/>.
+        /// Dynamic per-request decorations (storage, sync flags, active jobs) are applied
+        /// by the caller and are NOT cached.
+        /// </summary>
+        internal async Task<DashboardViewModel> GetOrCreateCachedStatisticsAsync(
+            string cacheKeySuffix,
+            Func<MailArchiverDbContext, DashboardViewModel> statisticsFactory)
+        {
+            var cacheSeconds = _dashboardOptions.CacheSeconds;
+            var cacheKey = $"dashboard-stats-{cacheKeySuffix}";
+
+            if (cacheSeconds > 0
+                && _memoryCache.TryGetValue(cacheKey, out DashboardViewModel? cached)
+                && cached != null)
+                return CloneStatistics(cached);
+
+            var model = await Task.Run(() => statisticsFactory(_context));
+
+            try
+            {
+                var totalDatabaseSizeBytes = await GetDatabaseSizeAsync();
+                model.TotalStorageUsed = FormatFileSize(totalDatabaseSizeBytes);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting database size: {Message}", ex.Message);
+                model.TotalStorageUsed = string.Empty;
+            }
+
+            if (cacheSeconds > 0)
+                _memoryCache.Set(cacheKey, model, new MemoryCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(cacheSeconds),
+                    Size = 1
+                });
+
+            return CloneStatistics(model);
+        }
+
+        /// <summary>
+        /// Deep-copies the cacheable statistics so per-request mutations (StorageUsed,
+        /// IsSyncing, IsSyncPending, LastRunHadIssues) never leak into the shared cache entry.
+        /// </summary>
+        private static DashboardViewModel CloneStatistics(DashboardViewModel source)
+        {
+            return new DashboardViewModel
+            {
+                TotalEmails = source.TotalEmails,
+                TotalAccounts = source.TotalAccounts,
+                TotalAttachments = source.TotalAttachments,
+                TotalStorageUsed = source.TotalStorageUsed,
+                EmailsPerAccount = source.EmailsPerAccount
+                    .Select(a => new AccountStatistics
+                    {
+                        AccountId = a.AccountId,
+                        AccountName = a.AccountName,
+                        EmailAddress = a.EmailAddress,
+                        EmailCount = a.EmailCount,
+                        LastSyncTime = a.LastSyncTime,
+                        IsEnabled = a.IsEnabled,
+                        Provider = a.Provider
+                    })
+                    .ToList(),
+                EmailsByMonth = source.EmailsByMonth
+                    .Select(m => new EmailCountByPeriod { Period = m.Period, Count = m.Count })
+                    .ToList(),
+                TopSenders = source.TopSenders
+                    .Select(s => new EmailCountByAddress { EmailAddress = s.EmailAddress, Count = s.Count })
+                    .ToList(),
+                RecentEmails = source.RecentEmails
+                    .Select(e => new RecentEmailDto
+                    {
+                        Id = e.Id,
+                        Subject = e.Subject,
+                        From = e.From,
+                        SentDate = e.SentDate,
+                        IsOutgoing = e.IsOutgoing,
+                        MailAccountName = e.MailAccountName
+                    })
+                    .ToList()
+            };
+        }
+
+        /// <summary>
+        /// Builds the last-12-months histogram with a single grouped query instead of
+        /// twelve sequential COUNT roundtrips. Groups by year/month so it translates
+        /// to both PostgreSQL and the query providers used by tests.
+        /// </summary>
+        internal static List<EmailCountByPeriod> BuildEmailsByMonth(IQueryable<ArchivedEmail> emails)
+        {
             var now = DateTime.UtcNow;
             var startDate = now.AddMonths(-11).Date;
             startDate = new DateTime(startDate.Year, startDate.Month, 1);
-            var months = new List<EmailCountByPeriod>();
+            var nextMonth = startDate.AddMonths(12);
+
+            var counts = emails
+                .Where(e => e.SentDate >= startDate && e.SentDate < nextMonth)
+                .GroupBy(e => new { e.SentDate.Year, e.SentDate.Month })
+                .Select(g => new { g.Key.Year, g.Key.Month, Count = g.Count() })
+                .ToDictionary(k => (k.Year, k.Month), k => k.Count);
+
+            var months = new List<EmailCountByPeriod>(12);
             for (int i = 0; i < 12; i++)
             {
                 var currentMonth = startDate.AddMonths(i);
-                var nextMonth = currentMonth.AddMonths(1);
-
-                int count;
-                if (i == 11)
-                {
-                    count = await _context.ArchivedEmails
-                        .Where(e => e.SentDate >= currentMonth && e.SentDate <= now)
-                        .CountAsync();
-                }
-                else
-                {
-                    count = await _context.ArchivedEmails
-                        .Where(e => e.SentDate >= currentMonth && e.SentDate < nextMonth)
-                        .CountAsync();
-                }
-
+                counts.TryGetValue((currentMonth.Year, currentMonth.Month), out var count);
                 months.Add(new EmailCountByPeriod
                 {
                     Period = $"{CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(currentMonth.Month)} {currentMonth.Year}",
                     Count = count
                 });
             }
-            model.EmailsByMonth = months;
-
-            model.TopSenders = await _context.ArchivedEmails
-                .Where(e => !e.IsOutgoing)
-                .GroupBy(e => e.From)
-                .Select(g => new EmailCountByAddress
-                {
-                    EmailAddress = g.Key,
-                    Count = g.Count()
-                })
-                .OrderByDescending(e => e.Count)
-                .Take(10)
-                .ToListAsync();
-
-            model.RecentEmails = await _context.ArchivedEmails
-                .Include(e => e.MailAccount)
-                .OrderByDescending(e => e.SentDate)
-                .Take(10)
-                .ToListAsync();
-
-            return model;
+            return months;
         }
 
         private async Task<long> GetDatabaseSizeAsync()

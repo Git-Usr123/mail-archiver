@@ -12,8 +12,12 @@ namespace MailArchiver.Services.Providers
         /// </summary>
         /// <param name="account">The mail account to sync</param>
         /// <param name="jobId">Optional sync job ID for progress tracking</param>
+        /// <param name="cancellationToken">
+        /// Cancels the sync. The background service passes the per-account sync timeout here, so a
+        /// long-running sync can be stopped between message batches instead of only between folders.
+        /// </param>
         /// <returns>Task</returns>
-        Task SyncMailAccountAsync(MailAccount account, string? jobId = null);
+        Task SyncMailAccountAsync(MailAccount account, string? jobId = null, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Tests the connection to the email provider
@@ -28,6 +32,14 @@ namespace MailArchiver.Services.Providers
         /// <param name="accountId">The mail account ID</param>
         /// <returns>List of folder names</returns>
         Task<List<string>> GetMailFoldersAsync(int accountId);
+
+        /// <summary>
+        /// The same folders, but carrying their own name alongside the full path. Separate from
+        /// <see cref="GetMailFoldersAsync"/> on purpose: a dozen callers only ever want names, and
+        /// only the exclusion editor needs enough to ask the matcher whether a folder is already
+        /// covered installation-wide.
+        /// </summary>
+        Task<List<MailFolderInfo>> GetMailFolderDetailsAsync(int accountId);
 
         /// <summary>
         /// Restores a single email to a specific folder

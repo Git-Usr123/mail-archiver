@@ -1,11 +1,13 @@
 using MailArchiver.Data;
 using MailArchiver.Models;
+using MailArchiver.Models.ViewModels;
 using MailArchiver.Services.Core;
 using MailArchiver.Services.Shared;
 using MailArchiver.Tests.Infrastructure;
 using MailArchiver.ViewModels;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
+using System.Globalization;
 using Xunit;
 
 namespace MailArchiver.Tests.Services;
@@ -518,7 +520,7 @@ public class EmailCoreServiceTests
             ctx.ArchivedEmails.Add(BuildEmail(acct, "out", "b@x.com", "c@x.com", isOutgoing: true));
             await ctx.SaveChangesAsync();
 
-            var svc = ServiceFactory.CreateEmailCoreService(ctx);
+            var svc = ServiceFactory.CreateEmailCoreServiceNoCache(ctx);
             var dash = await svc.GetDashboardStatisticsAsync();
 
             Assert.True(dash.TotalEmails >= 2);
@@ -545,7 +547,7 @@ public class EmailCoreServiceTests
             ctx.ArchivedEmails.Add(BuildEmail(acct, "s2", "unique-sender-2@test.local", "b@x.com", isOutgoing: false));
             await ctx.SaveChangesAsync();
 
-            var svc = ServiceFactory.CreateEmailCoreService(ctx);
+            var svc = ServiceFactory.CreateEmailCoreServiceNoCache(ctx);
             var dash = await svc.GetDashboardStatisticsAsync();
 
             // TopSenders only includes non-outgoing emails. We can't guarantee our test
@@ -571,13 +573,295 @@ public class EmailCoreServiceTests
                 ctx.ArchivedEmails.Add(BuildEmail(acct, $"e{i}", "a@x.com", "b@x.com", sentDate: DateTime.UtcNow.AddDays(-i)));
             await ctx.SaveChangesAsync();
 
-            var svc = ServiceFactory.CreateEmailCoreService(ctx);
+            var svc = ServiceFactory.CreateEmailCoreServiceNoCache(ctx);
             var dash = await svc.GetDashboardStatisticsAsync();
 
-            // RecentEmails is capped at 10 and ordered by SentDate desc.
+            // RecentEmails is capped at 10, ordered by SentDate desc, and carries the
+            // account name without loading full email entities. The shared Dev DB may
+            // contain newer emails from other accounts, so only check ordering, cap
+            // and that our seeded emails carry the correct account name.
             Assert.True(dash.RecentEmails.Count <= 10);
             for (int i = 1; i < dash.RecentEmails.Count; i++)
                 Assert.True(dash.RecentEmails[i - 1].SentDate >= dash.RecentEmails[i].SentDate);
+            Assert.Contains(dash.RecentEmails, e => e.MailAccountName == acct.Name);
+        }
+        finally
+        {
+            await CleanupTestAccountAsync(ctx);
+            await ctx.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task GetDashboardStatisticsAsync_AccountPanel_LimitedTo25ByLastSyncDesc()
+    {
+        var ctx = _fixture.CreateContext();
+        try
+        {
+            // More accounts than the panel shows, with last-sync times spread far enough apart
+            // that the ordering is unambiguous whatever else the shared DB holds.
+            for (int i = 0; i < 30; i++)
+            {
+                var seeded = await SeedAccountAsync(ctx);
+                seeded.LastSync = DateTime.UtcNow.AddMinutes(-i);
+            }
+            await ctx.SaveChangesAsync();
+
+            var svc = ServiceFactory.CreateEmailCoreServiceNoCache(ctx);
+            var dash = await svc.GetDashboardStatisticsAsync();
+
+            // The panel is capped and ordered by last sync, newest first. The shared Dev DB may
+            // hold accounts of its own, so only the cap and the ordering are checked, the same
+            // way the recent-emails test does it.
+            Assert.True(dash.EmailsPerAccount.Count <= 25);
+            for (int i = 1; i < dash.EmailsPerAccount.Count; i++)
+                Assert.True(dash.EmailsPerAccount[i - 1].LastSyncTime >= dash.EmailsPerAccount[i].LastSyncTime);
+        }
+        finally
+        {
+            await CleanupTestAccountAsync(ctx);
+            await ctx.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task GetDashboardStatisticsAsync_AccountPanel_KeepsAnAccountWithIssuesThatLastSyncWouldDrop()
+    {
+        var ctx = _fixture.CreateContext();
+        try
+        {
+            // The account with the oldest timestamp is the one an order by last sync alone pushes
+            // out of a capped panel, and it is exactly the shape of the accounts worth seeing:
+            // a failed run does not advance LastSync, so a troubled account keeps sinking.
+            MailAccount? oldest = null;
+            for (int i = 0; i < 30; i++)
+            {
+                var seeded = await SeedAccountAsync(ctx);
+                seeded.LastSync = DateTime.UtcNow.AddMinutes(-i);
+                if (i == 29) oldest = seeded;
+            }
+            await ctx.SaveChangesAsync();
+
+            var svc = ServiceFactory.CreateEmailCoreServiceNoCache(ctx);
+            var dash = await svc.GetDashboardStatisticsAsync(id => id == oldest!.Id);
+
+            Assert.True(dash.EmailsPerAccount.Count <= 25);
+            Assert.Equal(oldest!.Id, dash.EmailsPerAccount[0].AccountId);
+        }
+        finally
+        {
+            await CleanupTestAccountAsync(ctx);
+            await ctx.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task GetDashboardStatisticsAsync_AccountPanel_OrdersByLastSyncWithinEachGroup()
+    {
+        var ctx = _fixture.CreateContext();
+        try
+        {
+            // Two flagged accounts, the older one flagged first, so a stable-but-unordered
+            // implementation would return them the wrong way round.
+            var older = await SeedAccountAsync(ctx);
+            older.LastSync = DateTime.UtcNow.AddMinutes(-40);
+            var newer = await SeedAccountAsync(ctx);
+            newer.LastSync = DateTime.UtcNow.AddMinutes(-30);
+            for (int i = 0; i < 28; i++)
+            {
+                var seeded = await SeedAccountAsync(ctx);
+                seeded.LastSync = DateTime.UtcNow.AddMinutes(-i);
+            }
+            await ctx.SaveChangesAsync();
+
+            var svc = ServiceFactory.CreateEmailCoreServiceNoCache(ctx);
+            var flagged = new[] { older.Id, newer.Id };
+            var dash = await svc.GetDashboardStatisticsAsync(id => flagged.Contains(id));
+
+            Assert.Equal(newer.Id, dash.EmailsPerAccount[0].AccountId);
+            Assert.Equal(older.Id, dash.EmailsPerAccount[1].AccountId);
+
+            // And the rest still reads newest first.
+            for (int i = 3; i < dash.EmailsPerAccount.Count; i++)
+                Assert.True(dash.EmailsPerAccount[i - 1].LastSyncTime >= dash.EmailsPerAccount[i].LastSyncTime);
+        }
+        finally
+        {
+            await CleanupTestAccountAsync(ctx);
+            await ctx.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task GetDashboardStatisticsAsync_AccountPanel_CountsAreForTheRowsThatAreShown()
+    {
+        var ctx = _fixture.CreateContext();
+        try
+        {
+            // The second pass has to carry the per-account message count over, and it is loaded
+            // through a Contains() whose result carries no order of its own.
+            var flagged = await SeedAccountAsync(ctx);
+            flagged.LastSync = DateTime.UtcNow.AddMinutes(-90);
+            ctx.ArchivedEmails.Add(BuildEmail(flagged, "s1", "a@test.local", "b@test.local"));
+            ctx.ArchivedEmails.Add(BuildEmail(flagged, "s2", "a@test.local", "b@test.local"));
+            await ctx.SaveChangesAsync();
+
+            var svc = ServiceFactory.CreateEmailCoreServiceNoCache(ctx);
+            var dash = await svc.GetDashboardStatisticsAsync(id => id == flagged.Id);
+
+            var row = dash.EmailsPerAccount[0];
+            Assert.Equal(flagged.Id, row.AccountId);
+            Assert.Equal(2, row.EmailCount);
+            Assert.Equal(flagged.Name, row.AccountName);
+        }
+        finally
+        {
+            await CleanupTestAccountAsync(ctx);
+            await ctx.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public void ApplyPanelOrder_StaleCachedOrderIsCorrectedAgainstFreshFlags()
+    {
+        // The panel order is cached, the flags are read per request. A run finishing or a
+        // failure being acknowledged within the cache window has to reorder the rows, or the
+        // panel shows an account marked as troubled somewhere it can be missed. The troubled
+        // account is also the older one, because a failed run does not advance LastSync.
+        var troubled = new MailArchiver.Models.ViewModels.AccountStatistics { AccountId = 1, LastSyncTime = DateTime.UtcNow.AddMinutes(-40) };
+        var healthy = new MailArchiver.Models.ViewModels.AccountStatistics { AccountId = 2, LastSyncTime = DateTime.UtcNow.AddMinutes(-10) };
+        var rows = new List<MailArchiver.Models.ViewModels.AccountStatistics> { healthy, troubled };
+
+        EmailCoreService.ApplyPanelOrder(rows, id => id == troubled.AccountId);
+
+        Assert.Equal(troubled.AccountId, rows[0].AccountId);
+        Assert.Equal(healthy.AccountId, rows[1].AccountId);
+
+        // Acknowledging the failure drops the account back into last-sync order without
+        // changing the underlying rows.
+        EmailCoreService.ApplyPanelOrder(rows, _ => false);
+        Assert.Equal(healthy.AccountId, rows[0].AccountId);
+        Assert.Equal(troubled.AccountId, rows[1].AccountId);
+        Assert.Same(troubled, rows[1]);
+    }
+
+    [Fact]
+    public void ApplyPanelOrder_ShortOrEmptyListsAreUntouched()
+    {
+        var single = new List<MailArchiver.Models.ViewModels.AccountStatistics> { new() { AccountId = 1, LastSyncTime = DateTime.UtcNow } };
+        EmailCoreService.ApplyPanelOrder(single, _ => true);
+        Assert.Single(single);
+
+        var empty = new List<MailArchiver.Models.ViewModels.AccountStatistics>();
+        EmailCoreService.ApplyPanelOrder(empty, _ => true);
+        Assert.Empty(empty);
+
+        EmailCoreService.ApplyPanelOrder(null!, _ => true);
+    }
+
+    [Fact]
+    public async Task GetDashboardStatisticsAsync_MonthsBucketsCurrentMonthCounted()
+    {
+        var ctx = _fixture.CreateContext();
+        try
+        {
+            var acct = await SeedAccountAsync(ctx);
+            ctx.ArchivedEmails.Add(BuildEmail(acct, "now", "a@x.com", "b@x.com", sentDate: DateTime.UtcNow.AddHours(-1)));
+            await ctx.SaveChangesAsync();
+
+            var svc = ServiceFactory.CreateEmailCoreServiceNoCache(ctx);
+            var dash = await svc.GetDashboardStatisticsAsync();
+
+            // The single grouped histogram query must still count emails from the current month.
+            var now = DateTime.UtcNow;
+            var currentPeriod = $"{CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(now.Month)} {now.Year}";
+            var currentBucket = dash.EmailsByMonth.Single(m => m.Period == currentPeriod);
+            Assert.True(currentBucket.Count >= 1);
+        }
+        finally
+        {
+            await CleanupTestAccountAsync(ctx);
+            await ctx.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task GetDashboardStatisticsAsync_Cache_ReturnsCopyWithinTtl()
+    {
+        var ctx = _fixture.CreateContext();
+        try
+        {
+            var acct = await SeedAccountAsync(ctx);
+            var email1 = BuildEmail(acct, "cached-1", "a@x.com", "b@x.com");
+            ctx.ArchivedEmails.Add(email1);
+            await ctx.SaveChangesAsync();
+
+            var svc = ServiceFactory.CreateEmailCoreService(ctx); // default: CacheSeconds = 60
+            var first = await svc.GetDashboardStatisticsAsync();
+
+            // Mutating the returned model (as the controller does for sync/storage badges)
+            // must not leak into the cache entry.
+            first.EmailsPerAccount[0].StorageUsed = "leaked";
+
+            var second = await svc.GetDashboardStatisticsAsync();
+            Assert.NotEqual("leaked", second.EmailsPerAccount[0].StorageUsed);
+        }
+        finally
+        {
+            await CleanupTestAccountAsync(ctx);
+            await ctx.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task GetDashboardStatisticsAsync_Cache_EvictsEntriesWhenSizeLimitIsExceeded()
+    {
+        var ctx = _fixture.CreateContext();
+        try
+        {
+            var acct = await SeedAccountAsync(ctx);
+            var email1 = BuildEmail(acct, "evict-1", "a@x.com", "b@x.com");
+            ctx.ArchivedEmails.Add(email1);
+            await ctx.SaveChangesAsync();
+
+            // SizeLimit of 2 with Size = 1 per entry: filling a third distinct key must
+            // not grow the cache past the limit. (Overcapacity compaction keeps the
+            // existing entries and drops the excess insert — the guarantee that matters
+            // is bounded memory, not which entry survives.)
+            var (svc, cache) = ServiceFactory.CreateEmailCoreServiceWithSizeLimitedCache(ctx, sizeLimit: 2);
+
+            // Minimal model: CloneStatistics deep-copies every list, so they must not be null
+            DashboardViewModel Factory(MailArchiverDbContext c) => new()
+            {
+                TotalEmails = 1,
+                EmailsPerAccount = new List<AccountStatistics>(),
+                EmailsByMonth = new List<EmailCountByPeriod>(),
+                TopSenders = new List<EmailCountByAddress>(),
+                RecentEmails = new List<RecentEmailDto>()
+            };
+
+            var first = await svc.GetOrCreateCachedStatisticsAsync("user-1", Factory);
+            var second = await svc.GetOrCreateCachedStatisticsAsync("user-2", Factory);
+
+            // Over the limit: distinct keys far beyond SizeLimit, sequential inserts
+            for (var i = 3; i <= 12; i++)
+            {
+                var model = await svc.GetOrCreateCachedStatisticsAsync($"user-{i}", Factory);
+                Assert.NotNull(model);
+            }
+
+            // The cache never holds more than the limit, no matter how many distinct
+            // account combinations were requested (IMemoryCache exposes no key
+            // enumeration; the 12 candidate keys from this test are a superset)
+            var surviving = Enumerable.Range(1, 12)
+                .Count(i => cache.TryGetValue($"dashboard-stats-user-{i}", out _));
+            Assert.True(surviving <= 2,
+                $"Cache must stay bounded at SizeLimit, held {surviving} entries");
+
+            // And the service keeps serving data (the excess insert is recomputed on miss)
+            var again = await svc.GetOrCreateCachedStatisticsAsync("user-1", Factory);
+            Assert.NotNull(again);
+            Assert.Equal(1, again.TotalEmails);
         }
         finally
         {

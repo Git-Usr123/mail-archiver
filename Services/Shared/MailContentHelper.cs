@@ -95,6 +95,23 @@ namespace MailArchiver.Services.Shared
         }
 
         /// <summary>
+        /// Sets <see cref="MimeMessage.MessageId"/> only when the stored value yields a usable
+        /// restorable identifier. Mirrors the guard in
+        /// <c>ImapMailRestorer.CreateMimeMessageFromArchivedEmailAsync</c> so the export paths
+        /// cannot throw on rows whose stored Message-ID reduces to empty (MailKit 4.17.0 rejects
+        /// an empty string with ArgumentException) or to a token without a domain, which the
+        /// append path drops as well so MimeKit generates a fresh id (M3).
+        /// </summary>
+        public static void ApplyRestorableMessageId(MimeMessage message, string? storedMessageId)
+        {
+            var restorable = NormalizeMessageId(storedMessageId);
+            if (!string.IsNullOrEmpty(restorable) && restorable.Contains('@'))
+            {
+                message.MessageId = restorable;
+            }
+        }
+
+        /// <summary>
         /// Generates a deterministic fallback Message-ID for messages that have no
         /// Message-ID header. The ID is a SHA-256 hash over the pipe-joined components
         /// <c>from|to|subject|dateTicks</c> (plus <paramref name="canonicalHeaders"/> when
@@ -123,6 +140,63 @@ namespace MailArchiver.Services.Shared
             var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(uniqueString));
             var hashString = Convert.ToBase64String(hashBytes).Replace("+", "-").Replace("/", "_").Substring(0, 16);
             return $"generated-{hashString}@mail-archiver.local";
+        }
+
+        /// <summary>
+        /// The Message-ID a stored row is re-emitted with when it is restored or appended.
+        /// <para>
+        /// A stored value that is missing entirely yields <see cref="string.Empty"/>, leaving the
+        /// provider to generate one. A value carrying an <c>@</c> is returned normalized. A value
+        /// that is present but has no <c>@</c> — legacy rows archived before the fallback
+        /// generator existed — is replaced by a deterministic synthetic identifier derived from
+        /// it.
+        /// </para>
+        /// <para>
+        /// That last case is the point of this method. Such a value is not a usable msg-id, so
+        /// the restore path used to drop it and let MimeKit invent a fresh random one. That made
+        /// every append of the same row produce a different Message-ID, so the copies could never
+        /// be recognized as duplicates of each other and multiplied on every repetition. Deriving
+        /// the replacement from the stored value instead makes it stable across runs.
+        /// </para>
+        /// <para>
+        /// Whatever this returns is what a duplicate check may rely on being present on the
+        /// target, which is why the match keys are built from this method rather than from the
+        /// raw column.
+        /// </para>
+        /// </summary>
+        public static string ToRestorableMessageId(string? storedMessageId)
+        {
+            var normalized = NormalizeMessageId(storedMessageId);
+            if (normalized.Length == 0) return string.Empty;
+            if (normalized.Contains('@')) return normalized;
+
+            var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(normalized));
+            var hashString = Convert.ToBase64String(hashBytes)
+                .Replace("+", "-").Replace("/", "_").Substring(0, 16);
+            return $"legacy-{hashString}@mail-archiver.local";
+        }
+
+        /// <summary>
+        /// The set of stored values that should be treated as the same Message-ID when looking a
+        /// row up by it.
+        /// <para>
+        /// Rows have been written with and without surrounding angle brackets over the project's
+        /// history — the Graph pipeline stored <c>InternetMessageId</c> verbatim before the
+        /// write-side normalization was introduced. A lookup that compares only the normalized
+        /// form therefore misses its own older rows, which is the shape behind several reports of
+        /// mail never being recognized again after archiving.
+        /// </para>
+        /// <para>
+        /// Returns an empty list for a missing identifier, so a caller can skip the criterion
+        /// entirely rather than matching on an empty string.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string> MessageIdMatchCandidates(string? messageId)
+        {
+            var normalized = NormalizeMessageId(messageId);
+            if (normalized.Length == 0) return Array.Empty<string>();
+
+            return new[] { normalized, "<" + normalized + ">" };
         }
 
         /// <summary>

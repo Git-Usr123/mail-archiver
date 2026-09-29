@@ -8,7 +8,7 @@ namespace MailArchiver.Services.Providers
     /// </summary>
     public class ImportEmailService : IProviderEmailService
     {
-        public Task SyncMailAccountAsync(MailAccount account, string? jobId = null)
+        public Task SyncMailAccountAsync(MailAccount account, string? jobId = null, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException("Import provider does not support sync operations");
         }
@@ -19,6 +19,11 @@ namespace MailArchiver.Services.Providers
         }
 
         public Task<List<string>> GetMailFoldersAsync(int accountId)
+        {
+            throw new NotSupportedException("Import provider does not have folders");
+        }
+
+        public Task<List<MailFolderInfo>> GetMailFolderDetailsAsync(int accountId)
         {
             throw new NotSupportedException("Import provider does not have folders");
         }
