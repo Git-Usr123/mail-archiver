@@ -1,6 +1,6 @@
 # 🔄 Mail Synchronization (Quick vs. Full Sync)
 
-[← Back to Documentation Index](Index.md)
+[← Back to Documentation Index](index.md)
 
 ## 📋 Overview
 
@@ -14,6 +14,36 @@ There are two distinct synchronization modes:
 | **Full Sync** (resync) | New account, manual button, `AlwaysForceFullSync`, or per-account / global Full Sync interval | Every message in every non-excluded folder |
 
 Both modes are safe to run repeatedly – Mail Archiver detects duplicates (by `MessageId`, or by From/To/Subject/SentDate when the `MessageId` is missing) and skips messages that are already archived.
+
+---
+
+## 🔁 The Sync Cycle at a Glance
+
+```mermaid
+%%{init: {"flowchart": {"rankSpacing": 22, "nodeSpacing": 30, "padding": 6}}}%%
+flowchart TD
+    A[Background tick picks the most<br/>overdue accounts, up to MaxConcurrentSyncs] --> B{LastSync is<br/>the Unix epoch?}
+    B -->|Yes| C[Full Sync<br/>every message]
+    B -->|No| D[Quick Sync<br/>LastSync minus 12 h]
+    C --> E[Walk the folders]
+    D --> E
+    E -->|missing| F[Missing folder<br/>does not hold LastSync back]
+    E -->|fails| G[Failed folder<br/>holds LastSync back]
+    E -->|readable| H[Archive new messages,<br/>skip duplicates,<br/>advance the checkpoint]
+    F --> I{Any failed message<br/>or failed folder?}
+    G --> I
+    H --> I
+    I -->|Yes| J[LastSync stays put<br/>next cycle re-reads the window]
+    I -->|No| K[LastSync = now<br/>checkpoints dropped]
+    J --> L[Retention passes]
+    K --> L
+```
+
+The last decision is the one that matters. `LastSync` advances only when the run
+finished without failed messages **and** without failed folders. That is why a
+mailbox with a single unreadable folder keeps re-reading the same window instead
+of quietly moving past it — and why a run that ends early (timeout, cancel, rate
+limit) costs a re-read rather than losing mail.
 
 ---
 

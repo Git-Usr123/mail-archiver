@@ -1,10 +1,15 @@
 using MailArchiver.Models;
+using MailArchiver.Services.Security;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace MailArchiver.Data
 {
     public class MailArchiverDbContext : DbContext
     {
+        private readonly ICredentialProtector _credentialProtector;
+
         public DbSet<MailAccount> MailAccounts { get; set; }
         public DbSet<ArchivedEmail> ArchivedEmails { get; set; }
         public DbSet<EmailAttachment> EmailAttachments { get; set; }
@@ -18,11 +23,28 @@ namespace MailArchiver.Data
         public DbSet<AccountStorageBackfillState> AccountStorageBackfillStates { get; set; }
         public DbSet<ApiKey> ApiKeys { get; set; }
         public DbSet<AuditExportJob> AuditExportJobs { get; set; }
+        public DbSet<DashboardStatsCache> DashboardStatsCaches { get; set; }
 
+        /// <summary>
+        /// Used by design-time and unit tests that construct the context without a configured
+        /// key. Credential values pass through unchanged (no encryption).
+        /// </summary>
         public MailArchiverDbContext(DbContextOptions<MailArchiverDbContext> options)
-            : base(options)
+            : this(options, NullCredentialProtector.Instance)
         {
         }
+
+        public MailArchiverDbContext(DbContextOptions<MailArchiverDbContext> options, ICredentialProtector credentialProtector)
+            : base(options)
+        {
+            _credentialProtector = credentialProtector;
+        }
+
+        /// <summary>
+        /// The protector used by the credential value converters. Part of the model cache key
+        /// so contexts with different protector states do not share a cached model.
+        /// </summary>
+        internal ICredentialProtector CredentialProtector => _credentialProtector;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -235,7 +257,40 @@ namespace MailArchiver.Data
                 .Property(e => e.Provider)
                 .HasConversion<string>()
                 .HasMaxLength(10);
-                
+
+            // Encrypt the sensitive credential columns at rest. The protector is captured in a
+            // local so the compiled converter does not keep the DbContext instance alive in the
+            // statically cached model. Legacy plain text values pass through on read and are
+            // encrypted on the next write (or by CredentialEncryptionBackfillService).
+            //
+            // WARNING: because the encryption uses a random nonce, the same plain text maps to a
+            // different ciphertext every time. As a consequence, EF cannot translate equality or
+            // range predicates on these columns into matching SQL — e.g. Where(a => a.Password == "x")
+            // silently returns no rows once encryption is active. Never filter, join or group by
+            // these columns in LINQ; load the entities first, or match on a non-encrypted column.
+            var credentialProtector = _credentialProtector;
+            var credentialConverter = new ValueConverter<string?, string?>(
+                value => credentialProtector.Protect(value),
+                value => credentialProtector.Unprotect(value));
+            var credentialComparer = new ValueComparer<string?>(
+                (left, right) => left == right,
+                value => value == null ? 0 : value.GetHashCode(),
+                value => value);
+
+            var mailAccountBuilder = modelBuilder.Entity<MailAccount>();
+            foreach (var credentialProperty in new[]
+            {
+                nameof(MailAccount.Password),
+                nameof(MailAccount.ClientSecret),
+                nameof(MailAccount.OAuthRefreshToken),
+                nameof(MailAccount.OAuthAccessToken)
+            })
+            {
+                var property = mailAccountBuilder.Property<string?>(credentialProperty);
+                property.HasConversion(credentialConverter);
+                property.Metadata.SetValueComparer(credentialComparer);
+            }
+
             // AccessLog entity configuration
             modelBuilder.Entity<AccessLog>()
                 .Property(a => a.Username)
@@ -389,6 +444,74 @@ namespace MailArchiver.Data
 
             modelBuilder.Entity<AccountStorageCache>()
                 .ToTable("AccountStorageCache", "mail_archiver");
+
+            // DashboardStatsCache entity configuration (pre-computed dashboard
+            // statistics, refreshed periodically by DashboardStatsRefreshService)
+            modelBuilder.Entity<DashboardStatsCache>()
+                .HasKey(c => c.Key);
+
+            modelBuilder.Entity<DashboardStatsCache>()
+                .Property(c => c.Key)
+                .HasColumnType("text");
+
+            modelBuilder.Entity<DashboardStatsCache>()
+                .Property(c => c.TotalEmails)
+                .HasColumnType("bigint");
+
+            modelBuilder.Entity<DashboardStatsCache>()
+                .Property(c => c.IncomingEmails)
+                .HasColumnType("bigint");
+
+            modelBuilder.Entity<DashboardStatsCache>()
+                .Property(c => c.OutgoingEmails)
+                .HasColumnType("bigint");
+
+            modelBuilder.Entity<DashboardStatsCache>()
+                .Property(c => c.TotalAttachments)
+                .HasColumnType("bigint");
+
+            modelBuilder.Entity<DashboardStatsCache>()
+                .Property(c => c.IncomingAttachments)
+                .HasColumnType("bigint");
+
+            modelBuilder.Entity<DashboardStatsCache>()
+                .Property(c => c.OutgoingAttachments)
+                .HasColumnType("bigint");
+
+            modelBuilder.Entity<DashboardStatsCache>()
+                .Property(c => c.TotalAccounts)
+                .HasColumnType("integer");
+
+            modelBuilder.Entity<DashboardStatsCache>()
+                .Property(c => c.AccountDomains)
+                .HasColumnType("integer");
+
+            modelBuilder.Entity<DashboardStatsCache>()
+                .Property(c => c.TotalDatabaseSizeBytes)
+                .HasColumnType("bigint");
+
+            modelBuilder.Entity<DashboardStatsCache>()
+                .Property(c => c.DefaultSeriesJson)
+                .HasColumnType("jsonb");
+
+            modelBuilder.Entity<DashboardStatsCache>()
+                .Property(c => c.EmailsPerAccountJson)
+                .HasColumnType("jsonb");
+
+            modelBuilder.Entity<DashboardStatsCache>()
+                .Property(c => c.ComputedAtUtc)
+                .HasColumnType("timestamp with time zone");
+
+            modelBuilder.Entity<DashboardStatsCache>()
+                .Property(c => c.ComputedWithDirectionSplits)
+                .HasColumnType("boolean");
+
+            modelBuilder.Entity<DashboardStatsCache>()
+                .Property(c => c.ComputedWithSelectablePeriods)
+                .HasColumnType("boolean");
+
+            modelBuilder.Entity<DashboardStatsCache>()
+                .ToTable("DashboardStatsCache", "mail_archiver");
 
             // AccountStorageBackfillState entity configuration
             modelBuilder.Entity<AccountStorageBackfillState>()

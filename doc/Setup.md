@@ -1,6 +1,6 @@
 # 🛠️ Mail Archiver Setup Guide
 
-[← Back to Documentation Index](Index.md)
+[← Back to Documentation Index](index.md)
 
 ## 📋 Overview
 
@@ -93,8 +93,11 @@ services:
       - View__DefaultToPlainText=true
       - View__BlockExternalResources=false
 
-      # Dashboard Settings (statistics cache)
+      # Dashboard Settings (statistics cache, counter parts, chart periods)
       - Dashboard__CacheSeconds=60
+      - Dashboard__RefreshIntervalMinutes=15
+      - Dashboard__ShowDirectionSplits=true
+      - Dashboard__SelectablePeriods=true
 
       # Jobs Settings (background jobs page)
       - Jobs__RefreshSeconds=30
@@ -346,7 +349,10 @@ Both folder settings ship empty on purpose: rewriting or dropping folders withou
   - This setting works independently from `DefaultToPlainText` and provides an additional layer of privacy protection when viewing HTML emails.
 
 ### 📊 Dashboard Settings
-- `Dashboard__CacheSeconds`: How long computed dashboard statistics (totals, per-account counts, monthly histogram, top senders, recent emails, database size) are kept in the server's in-memory cache. Default is `60` seconds. Set to `0` to disable caching and always recompute the statistics. Higher values reduce database load in large environments at the cost of more stale numbers. Sync status badges and storage values are always fetched live and are not affected by this cache.
+- `Dashboard__ShowDirectionSplits`: Whether the counter cards carry their incoming and outgoing parts, and the account card the number of distinct domains. Default is `true`. Set to `false` and those numbers are not computed rather than computed and hidden: the counters read a plain count, and the attachment count stops joining to the mail it hangs on, which is the one query these parts add.
+- `Dashboard__SelectablePeriods`: Whether the dashboard charts offer a resolution, a period and arrows to move it. Default is `true`. Set to `false` and the charts show the last twelve months by month and the senders of the whole archive, the chart endpoint answers as if it did not exist, and the oldest send date is not looked up.
+- `Dashboard__CacheSeconds`: How long computed dashboard statistics (totals with their incoming and outgoing splits, per-account counts, the chart series, top senders, recent emails, database size) are kept in the server's in-memory cache. Default is `60` seconds. Set to `0` to disable caching and always recompute the statistics. Each chart selection of resolution and period is cached on its own, so a dashboard that is switched between selections holds one entry per selection. Higher values reduce database load in large environments at the cost of more stale numbers. Sync status badges, storage values and the recent-emails list are always fetched live and are not affected by this cache.
+- `Dashboard__RefreshIntervalMinutes`: How often the `DashboardStatsRefreshService` background service recomputes the expensive dashboard aggregates (total counts with their incoming and outgoing splits, per-account counts, the number of account domains, the default chart series with its top senders, database size) into the `DashboardStatsCache` database table. On installations with several million mails the dashboard reads these prepared values instead of aggregating the whole archive in the request path, which turns a ~10 second first load into milliseconds. The chart endpoint answers the default selection (months over one year, incoming senders, the current period) from the same row, so returning to it shows the numbers of the first paint; every other selection is computed on request and kept in the in-memory cache above. Default is `15` minutes. Set to `0` to disable the background refresh; the dashboard then computes the statistics live again (with the in-memory cache above still applying). The values shown may lag up to the configured interval behind the actual archive state. A row computed with other `ShowDirectionSplits` or `SelectablePeriods` values than the current ones is not used; the dashboard computes live until the next refresh.
 
 ### 🔄 Jobs Settings
 - `Jobs__RefreshSeconds`: How often the background jobs page reloads itself while a browser tab has it open. Default is `30` seconds. Set to `0` to turn the automatic reload off and refresh by hand. Each reload rebuilds the page from all eight job sources, so on installations with many accounts a longer interval keeps the load down, multiplied by every tab that is open on the page.
@@ -369,7 +375,7 @@ Both folder settings ship empty on purpose: rewriting or dropping folders withou
 ### 📄 CSV Import Settings
 - `CsvImport__MaxRows`: Maximum number of CSV rows (mailboxes) processed in a single bulk import. Default is `5000`. Increase this value for large deployments; lower it to limit the impact of a single import run on database load.
 - `CsvImport__MaxFileSizeBytes`: Maximum allowed size (in bytes) of the uploaded CSV file. Default is `10000000` (10 MB). Adjust this value to match your upload limits if needed.
-- See [Account Import Guide](Account%20Import.md) for detailed usage instructions on bulk IMAP account import via CSV.
+- See [Account Import Guide](Account-Import.md) for detailed usage instructions on bulk IMAP account import via CSV.
 
 ### 📤 Audit Export Settings
 Settings for the audit data export page (admin only, reachable from the Logs page). The export generates a ZIP package with tabular mass data (INDEX.XML + CSV tables + DTD) from the existing archive for external audit tools. See the [Audit Data Export Guide](AuditExport.md) for usage details.
@@ -412,7 +418,7 @@ Attachment deduplication stores every unique attachment payload only once (conte
 - `AttachmentDeduplication__CommandTimeoutSeconds`: Database command timeout (in seconds) for the migration batch operations (INSERT with SHA-256 hashing and UPDATE). Default is `300` (5 minutes). Increase this value for very large databases or attachments, or lower it if you want faster failure detection. If a batch still times out, the service automatically retries with half the batch size.
 
 ### 💾 Account Storage Settings
-The per-account storage display shows the database storage usage (all mail fields + attachments) for each account in the Dashboard "Account Overview" table and the MailAccounts "Show All" table. An autark background service (`AccountStorageRefreshService`) computes the values via PostgreSQL `pg_column_size` on the entire row (covering all fields of a mail) and caches them in the `AccountStorageCache` table. This service runs independently of `DatabaseMaintenance__Enabled`.
+The per-account storage display shows the database storage usage (all mail fields + attachments) for each account in the Dashboard "Account Overview" table and the MailAccounts "Show All" table. An autark background service (`AccountStorageRefreshService`) computes the values by adding up PostgreSQL `pg_column_size` per column (covering all fields of a mail without reading the mail bodies) and caches them in the `AccountStorageCache` table. This service runs independently of `DatabaseMaintenance__Enabled`.
 
 - `AccountStorage__Enabled`: Enable or disable the storage refresh service (true/false). Default is `true`. When enabled, the service performs a resumable backfill of pending accounts on startup (crash-safe via `AccountStorageBackfillState`) and a daily full refresh thereafter. When disabled, storage values are only updated when emails are synced, imported, or deleted, but the displayed values may become stale over time.
 - `AccountStorage__DailyExecutionTime`: Time of day (24-hour format `HH:mm`) for the daily full refresh of all accounts. Default is `02:30`. Choose a time during low system activity.
@@ -430,6 +436,24 @@ The per-account storage display shows the database storage usage (all mail field
 
 ### 🛡️ Security Settings
 - `AllowedHosts`: A semicolon-separated list of host names that the application is allowed to serve. This helps prevent HTTP Host header attacks. Example: `AllowedHosts=mailarchiver.example.com;www.mailarchiver.example.com`. **Important**: Do not use `*` in production environments as it disables host header validation.
+
+#### 🔐 Credential Encryption at Rest
+Mail account credentials (IMAP password, M365 client secret and MSA OAuth tokens) can be encrypted in the database. The encryption key is kept **outside** the database (environment variable / Docker secret), so a database dump alone is not enough to read the credentials.
+
+- `Security__CredentialEncryptionKey`: Base64 encoded 256-bit (32 byte) key encryption key. Generate one with:
+  ```bash
+  openssl rand -base64 32
+  ```
+  Set the value as an environment variable (recommended: `Security__CredentialEncryptionKey` in your compose file or container environment). The application does not support `_FILE` style Docker secrets — if you use a Docker secret, mount it and load its content into the environment variable in your entrypoint. Never commit the key to `appsettings.json`. When a key is configured, credentials are encrypted on write, and a background service encrypts existing plain text credentials once.
+- `Security__EncryptAccountCredentials`: Enable or disable encryption of new/updated credential values (true/false). Default is `true`. When no key is configured, credentials are stored as plain text and a warning is logged at startup — existing installations are not affected until a key is provided.
+- `Security__CredentialEncryptionBackfill`: Whether the background service should encrypt existing plain text credentials on startup (true/false). Default is `true`. No-op without a configured key.
+- `Security__CredentialEncryptionKeyPrevious`: Optional previous key, only used to decrypt values encrypted with it (for key rotation). New values are always encrypted with `Security__CredentialEncryptionKey`.
+
+  > ⚠️ **Key rotation**: after rotating, keep `Security__CredentialEncryptionKeyPrevious` configured **until every credential has been rewritten** (e.g. by editing the account or an automatic OAuth token refresh) — existing values encrypted with the old key are *not* automatically re-encrypted with the new key. Once you remove the previous key, any credential still encrypted with it becomes unreadable and has to be entered again. As long as it is configured, it must be kept as safe as the current key.
+
+> ⚠️ **Keep the key safe**: Without the key, encrypted credentials cannot be recovered and have to be entered again. Back it up together with (but separately from) your database backups.
+>
+> 💡 **Existing installations**: Upgrade safely — as long as no `Security__CredentialEncryptionKey` is set, nothing changes. Set the key when you are ready; existing plain text credentials remain readable and are encrypted in the background.
 
 ### 🔐 OIDC Configuration
 
@@ -537,6 +561,9 @@ AUTH_PASSWORD=YourSecureAdminPassword456!
 # OIDC / OAuth Secrets
 OAUTH_CLIENT_SECRET=YourOAuthClientSecret
 
+# Credential Encryption at Rest (generate with: openssl rand -base64 32)
+CREDENTIAL_ENCRYPTION_KEY=YourBase64Encoded32ByteKey
+
 # Kestrel HTTPS (optional)
 KESTREL_CERT_PASSWORD=YourCertPassword
 ```
@@ -563,6 +590,9 @@ services:
 
       # OIDC Configuration
       - OAuth__ClientSecret=${OAUTH_CLIENT_SECRET}
+
+      # Credential Encryption at Rest
+      - Security__CredentialEncryptionKey=${CREDENTIAL_ENCRYPTION_KEY}
     # ... ports, volumes, networks ...
 
   postgres:
@@ -595,6 +625,10 @@ AUTH_PASSWORD=change_me_admin_password
 
 # --- OIDC / OAuth ---
 OAUTH_CLIENT_SECRET=change_me_client_secret
+
+# --- Credential Encryption at Rest ---
+# Generate with: openssl rand -base64 32
+CREDENTIAL_ENCRYPTION_KEY=change_me_base64_32_byte_key
 
 #...and so on
 ```
